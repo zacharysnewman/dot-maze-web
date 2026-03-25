@@ -147,9 +147,9 @@ export class Draw {
         if (right && bottom && !(left || top))          return Draw.wallBRC;
         if (bottom && left && !(top || right))          return Draw.wallBLC;
         if (topLeft && !(top || right || bottom || left))    return Draw.wallBRC;
-        if (topRight && !(top || right || bottom || left))   return Draw.wallTRC;
+        if (topRight && !(top || right || bottom || left))   return Draw.wallBLC;
         if (bottomRight && !(top || right || bottom || left)) return Draw.wallTLC;
-        if (bottomLeft && !(top || right || bottom || left)) return Draw.wallBLC;
+        if (bottomLeft && !(top || right || bottom || left)) return Draw.wallTRC;
 
         return Draw.nothing;
     }
