@@ -4,6 +4,18 @@ import { Levels } from './Levels';
 import { Stats } from './Stats';
 import { Time } from './Time';
 
+// Frightened duration by level (seconds)
+const FRIGHTENED_DURATION: Record<number, number> = {
+    1:6, 2:5, 3:4, 4:3, 5:2, 6:5, 7:2, 8:2, 9:1,
+    10:5, 11:2, 12:1, 13:1, 14:3, 15:1, 16:1, 17:0, 18:1,
+};
+
+// Frightened flash count by level
+const FRIGHTENED_FLASH_COUNT: Record<number, number> = {
+    1:5, 2:5, 3:5, 4:5, 5:5, 6:5, 7:5, 8:5, 9:3,
+    10:5, 11:5, 12:3, 13:3, 14:5, 15:3, 16:3, 17:0, 18:3,
+};
+
 type WallDrawFn = (x: number, y: number) => void;
 
 export class Draw {
@@ -73,9 +85,55 @@ export class Draw {
         if (Draw.pacmanAnim >= frames.length) Draw.pacmanAnim = 0;
     }
 
+    static getFrightenedDuration(level: number): number {
+        return level >= 19 ? 0 : (FRIGHTENED_DURATION[level] ?? 0);
+    }
+
+    static getFrightenedFlashCount(level: number): number {
+        return level >= 19 ? 0 : (FRIGHTENED_FLASH_COUNT[level] ?? 0);
+    }
+
     static ghost(color: string, x: number, y: number, scale: number): void {
+        // Find this ghost by position to determine its mode
+        const ghost = gameState.ghosts?.find(g => Math.abs(g.x - x) < 1 && Math.abs(g.y - y) < 1);
+        const mode = ghost?.ghostMode;
+
+        if (mode === 'eyes') {
+            Draw.drawGhostEyes(color, x, y, scale);
+            return;
+        }
+
+        if (mode === 'frightened') {
+            const flashCount = Draw.getFrightenedFlashCount(gameState.level);
+            const flashDuration = flashCount * 14 / 60;
+            const timeLeft = gameState.frightenedEnd - Time.timeSinceStart;
+            const isFlashing = flashCount > 0 && timeLeft < flashDuration && timeLeft > 0;
+            let ghostColor = '#0000cc';
+            if (isFlashing) {
+                ghostColor = Math.floor(Time.frameCount / 7) % 2 === 0 ? '#0000cc' : 'white';
+            }
+            Draw.drawGhostBody(ghostColor, x, y, scale);
+            Draw.drawFrightenedEyes(x, y, scale, ghostColor);
+            return;
+        }
+
         Draw.drawGhostBody(color, x, y, scale);
         Draw.drawGhostEyes(color, x, y, scale);
+    }
+
+    static drawFrightenedEyes(x: number, y: number, scale: number, bodyColor: string): void {
+        const ctx = gameState.ctx;
+        const ghostSize = scale * unit;
+        const eyeOffsetX = ghostSize * 0.3;
+        const eyeOffsetY = ghostSize * 0.15;
+        const eyeRadius  = ghostSize * 0.12;
+        const dotColor = bodyColor === 'white' ? '#0000cc' : 'white';
+        ctx.fillStyle = dotColor;
+        for (const side of [-1, 1]) {
+            ctx.beginPath();
+            ctx.arc(x + side * eyeOffsetX, y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+            ctx.fill();
+        }
     }
 
     static drawGhostBody(color: string, x: number, y: number, scale: number): void {
@@ -277,6 +335,22 @@ export class Draw {
         ctx.textBaseline = 'middle';
         ctx.fillStyle = 'red';
         ctx.fillText('GAME OVER', cx, cy);
+    }
+
+    static scorePopups(): void {
+        const ctx = gameState.ctx;
+        const now = Time.timeSinceStart;
+        const fontSize = Math.round(unit * 0.7);
+        ctx.font = `bold ${fontSize}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'cyan';
+        for (const popup of gameState.scorePopups) {
+            if (now < popup.endTime) {
+                ctx.fillText(String(popup.score), popup.x, popup.y);
+            }
+        }
+        gameState.scorePopups = gameState.scorePopups.filter(p => now < p.endTime);
     }
 
     static level(): void {

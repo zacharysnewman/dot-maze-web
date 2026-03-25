@@ -8,7 +8,7 @@ import type { IGameObject } from '../types';
 
 export class Move {
     static pacman(): void {
-        if (gameState.frozen) return;
+        if (gameState.frozen || gameState.pacmanFrozen) return;
         Move.moveObject(gameState.pacman);
 
         const p = gameState.pacman;

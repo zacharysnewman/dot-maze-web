@@ -8,6 +8,17 @@ interface TurnOption {
     y: number;
 }
 
+// Scatter corner targets by ghost color
+const SCATTER_TARGETS: Record<string, { x: number; y: number }> = {
+    'red':     { x: 26, y: 0  },  // Blinky — top-right
+    'hotpink': { x: 2,  y: 0  },  // Pinky — top-left
+    'cyan':    { x: 27, y: 34 },  // Inky — bottom-right
+    'orange':  { x: 0,  y: 34 },  // Clyde — bottom-left
+};
+
+// Ghost house return tile — eyes navigate here to revive
+const EYES_TARGET = { x: 13, y: 14 };
+
 export class AI {
     static modePatterns: [string, number, number, number][] = [
         ['scatter',  7,       7,       5      ],
@@ -20,12 +31,58 @@ export class AI {
         ['chase',    -1,      -1,      -1     ],
     ];
 
+    static prngState = 0;
+
+    static prngNext(): number {
+        AI.prngState = (AI.prngState * 1664525 + 1013904223) >>> 0;
+        return AI.prngState;
+    }
+
+    static resetPrng(): void {
+        AI.prngState = 0;
+    }
+
+    // Returns the current global scatter/chase mode based on the timer index
+    static getCurrentGlobalMode(): 'scatter' | 'chase' {
+        return AI.modePatterns[gameState.scatterChaseIndex][0] as 'scatter' | 'chase';
+    }
+
+    // Returns the duration (seconds) of the current mode phase for the current level.
+    // -1 means indefinite.
+    static getCurrentPhaseDuration(): number {
+        const idx = gameState.scatterChaseIndex;
+        const level = gameState.level;
+        const col = level === 1 ? 1 : level <= 4 ? 2 : 3;
+        return AI.modePatterns[idx][col];
+    }
+
     static ghostTileCenter(obj: IGameObject): void {
         if (gameState.frozen) return;
+
+        const mode = obj.ghostMode ?? AI.getCurrentGlobalMode();
+
+        if (mode === 'frightened') {
+            AI.ghostFrightenedMove(obj);
+            return;
+        }
+
         const myX = obj.roundedX();
         const myY = obj.roundedY();
-        const pX  = gameState.pacman.roundedX();
-        const pY  = gameState.pacman.roundedY();
+        let targetX: number;
+        let targetY: number;
+
+        if (mode === 'eyes') {
+            targetX = EYES_TARGET.x;
+            targetY = EYES_TARGET.y;
+        } else if (mode === 'scatter') {
+            const corner = SCATTER_TARGETS[obj.color] ?? { x: 0, y: 0 };
+            targetX = corner.x;
+            targetY = corner.y;
+        } else {
+            // chase — target Pac-Man
+            targetX = gameState.pacman.roundedX();
+            targetY = gameState.pacman.roundedY();
+        }
 
         const canMoveLeft  = (obj.leftObject()   ?? 0) > 2 && obj.moveDir !== 'right';
         const canMoveRight = (obj.rightObject()  ?? 0) > 2 && obj.moveDir !== 'left';
@@ -44,7 +101,7 @@ export class AI {
         let bestDir: Direction = turns[0].dir;
         let bestDist = Infinity;
         for (const turn of turns) {
-            const dist = getDistance(turn.x, turn.y, pX, pY);
+            const dist = getDistance(turn.x, turn.y, targetX, targetY);
             if (dist < bestDist) {
                 bestDist = dist;
                 bestDir  = turn.dir;
@@ -52,5 +109,27 @@ export class AI {
         }
 
         obj.moveDir = bestDir;
+    }
+
+    // PRNG-based random direction selection for frightened ghosts
+    static ghostFrightenedMove(obj: IGameObject): void {
+        const allDirs: Direction[] = ['up', 'left', 'down', 'right'];
+        const canMove: Record<Direction, boolean> = {
+            left:  (obj.leftObject()   ?? 0) > 2 && obj.moveDir !== 'right',
+            right: (obj.rightObject()  ?? 0) > 2 && obj.moveDir !== 'left',
+            up:    (obj.topObject()    ?? 0) > 2 && obj.moveDir !== 'down',
+            down:  (obj.bottomObject() ?? 0) > 2 && obj.moveDir !== 'up',
+        };
+
+        const rng = AI.prngNext();
+        const startIdx = rng % 4;
+
+        for (let i = 0; i < 4; i++) {
+            const dir = allDirs[(startIdx + i) % 4];
+            if (canMove[dir]) {
+                obj.moveDir = dir;
+                return;
+            }
+        }
     }
 }

@@ -8,6 +8,7 @@ import { AI }    from './static/AI';
 import { Levels } from './static/Levels';
 import { Stats }  from './static/Stats';
 import { GameObject } from './object/GameObject';
+import type { IGameObject, Direction } from './types';
 
 // Starting tile positions for each actor
 const START = {
@@ -22,8 +23,136 @@ function tileToPixel(tileX: number, tileY: number): { x: number; y: number } {
     return { x: tileX * unit + unit / 2, y: tileY * unit + unit / 2 };
 }
 
+function oppositeDir(dir: Direction): Direction {
+    const opp: Record<Direction, Direction> = { left: 'right', right: 'left', up: 'down', down: 'up' };
+    return opp[dir];
+}
+
+// Frightened duration by level (seconds; 0 = reverse only, no blue)
+function getFrightenedDuration(level: number): number {
+    return Draw.getFrightenedDuration(level);
+}
+
+// ── Scatter/Chase Timer ───────────────────────────────────────────────────────
+
+function resetScatterChaseTimer(): void {
+    gameState.scatterChaseIndex = 0;
+    gameState.scatterChaseElapsed = 0;
+    for (const ghost of gameState.ghosts) {
+        if (ghost.ghostMode !== 'frightened' && ghost.ghostMode !== 'eyes') {
+            ghost.ghostMode = 'scatter';
+        }
+    }
+}
+
+function updateScatterChaseMode(dt: number): void {
+    if (gameState.frozen || gameState.gameOver) return;
+    // Pause timer while any ghost is frightened (Phase 4 requirement)
+    if (gameState.ghosts.some(g => g.ghostMode === 'frightened')) return;
+
+    const duration = AI.getCurrentPhaseDuration();
+    if (duration < 0) return; // indefinite phase
+
+    gameState.scatterChaseElapsed += dt;
+
+    if (gameState.scatterChaseElapsed >= duration) {
+        gameState.scatterChaseElapsed -= duration;
+        if (gameState.scatterChaseIndex < AI.modePatterns.length - 1) {
+            gameState.scatterChaseIndex++;
+        }
+        const newMode = AI.getCurrentGlobalMode();
+        // Apply new mode and immediately reverse non-frightened, non-eyes ghosts
+        for (const ghost of gameState.ghosts) {
+            if (ghost.ghostMode !== 'frightened' && ghost.ghostMode !== 'eyes') {
+                ghost.ghostMode = newMode;
+                ghost.moveDir = oppositeDir(ghost.moveDir);
+            }
+        }
+    }
+}
+
+// ── Frightened Mode ───────────────────────────────────────────────────────────
+
+function activateFrightened(): void {
+    const duration = getFrightenedDuration(gameState.level);
+    gameState.ghostEatenChain = 0;
+
+    if (duration <= 0) {
+        // Zero duration: reverse ghosts but don't turn them blue
+        for (const ghost of gameState.ghosts) {
+            if (ghost.ghostMode !== 'eyes') {
+                ghost.moveDir = oppositeDir(ghost.moveDir);
+            }
+        }
+        return;
+    }
+
+    gameState.frightenedEnd = Time.timeSinceStart + duration;
+    for (const ghost of gameState.ghosts) {
+        if (ghost.ghostMode !== 'eyes') {
+            ghost.ghostMode = 'frightened';
+            ghost.moveDir = oppositeDir(ghost.moveDir);
+            ghost.moveSpeed = 0.5;
+        }
+    }
+}
+
+function updateFrightenedMode(): void {
+    if (gameState.frightenedEnd <= 0) return;
+    if (Time.timeSinceStart < gameState.frightenedEnd) return;
+
+    gameState.frightenedEnd = 0;
+    const globalMode = AI.getCurrentGlobalMode();
+    for (const ghost of gameState.ghosts) {
+        if (ghost.ghostMode === 'frightened') {
+            ghost.ghostMode = globalMode;
+            ghost.moveSpeed = 1.0;
+        }
+    }
+}
+
+function eatGhost(ghost: IGameObject): void {
+    const scores = [200, 400, 800, 1600];
+    const score = scores[Math.min(gameState.ghostEatenChain, 3)];
+    gameState.ghostEatenChain++;
+    Stats.addToScore(score);
+
+    // Show score popup at the capture location
+    gameState.scorePopups.push({
+        x: ghost.x,
+        y: ghost.y,
+        score,
+        endTime: Time.timeSinceStart + 1.0,
+    });
+
+    // Freeze Pac-Man briefly while score is shown
+    gameState.pacmanFrozen = true;
+    Time.addTimer(1.0, () => { gameState.pacmanFrozen = false; });
+
+    // Ghost becomes eyes and speeds home
+    ghost.ghostMode = 'eyes';
+    ghost.moveSpeed = 1.5;
+}
+
+// ── Game Object Callbacks ─────────────────────────────────────────────────────
+
+function makeGhostTileCentered(getGhost: () => IGameObject): (_x: number, _y: number) => void {
+    return (_x: number, _y: number) => {
+        const ghost = getGhost();
+        // Eyes arrive at ghost house entrance — revive
+        if (ghost.ghostMode === 'eyes' && ghost.roundedX() === 13 && ghost.roundedY() === 14) {
+            ghost.ghostMode = AI.getCurrentGlobalMode();
+            ghost.moveSpeed = 1.0;
+            return;
+        }
+        AI.ghostTileCenter(ghost);
+    };
+}
+
+// ── Positions & Reset ─────────────────────────────────────────────────────────
+
 function resetPositions(): void {
-    const actors: Array<{ key: keyof typeof START; dir: 'left' | 'right' | 'up' | 'down' }> = [
+    const actors: Array<{ key: keyof typeof START; dir: Direction }> = [
         { key: 'pacman', dir: 'left' },
         { key: 'blinky', dir: 'left' },
         { key: 'inky',   dir: 'left' },
@@ -37,7 +166,16 @@ function resetPositions(): void {
         obj.y = pos.y;
         obj.moveDir = dir;
         obj.moveSpeed = 1.0;
+        if (key !== 'pacman') {
+            obj.ghostMode = 'scatter';
+        }
     }
+    gameState.frightenedEnd = 0;
+    gameState.ghostEatenChain = 0;
+    gameState.scorePopups = [];
+    gameState.pacmanFrozen = false;
+    resetScatterChaseTimer();
+    AI.resetPrng();
 }
 
 function countRemainingDots(): number {
@@ -76,16 +214,24 @@ function loseLife(): void {
     });
 }
 
+// ── Collision Detection ───────────────────────────────────────────────────────
+
 function checkCollisions(): void {
     const px = gameState.pacman.roundedX();
     const py = gameState.pacman.roundedY();
     for (const ghost of gameState.ghosts) {
         if (ghost.roundedX() === px && ghost.roundedY() === py) {
-            loseLife();
-            return;
+            if (ghost.ghostMode === 'frightened') {
+                eatGhost(ghost);
+            } else if (ghost.ghostMode !== 'eyes') {
+                loseLife();
+                return;
+            }
         }
     }
 }
+
+// ── Pac-Man Tile Callbacks ────────────────────────────────────────────────────
 
 function pacmanOnTileChanged(x: number, y: number): void {
     const curTile = Levels.levelDynamic[y][x];
@@ -99,12 +245,13 @@ function pacmanOnTileChanged(x: number, y: number): void {
         if (countRemainingDots() === 0) levelClear();
     }
 
-    // Power pellet
+    // Power pellet — triggers frightened mode
     if (curTile === 4) {
         Levels.levelDynamic[y][x] = 5;
         Stats.addToScore(50);
         gameState.pacman.moveSpeed = 0.0;
         Time.addTimer(0.05, () => { gameState.pacman.moveSpeed = 1.0; });
+        activateFrightened();
         if (countRemainingDots() === 0) levelClear();
     }
 }
@@ -113,25 +260,36 @@ function pacmanOnTileCentered(_x: number, _y: number): void {}
 
 function ghostOnTileChanged(_x: number, _y: number): void {}
 
+// ── Initialization ────────────────────────────────────────────────────────────
+
 function initializeLevel(): void {
     Levels.levelSetup   = Levels.level1;
     Levels.levelDynamic = Levels.level1.map(row => [...row]);
 
     gameState.pacman = new GameObject('yellow',  START.pacman.x, START.pacman.y, 0.667, Move.pacman, Draw.pacman, pacmanOnTileChanged, pacmanOnTileCentered);
-    gameState.blinky = new GameObject('red',     START.blinky.x, START.blinky.y, 0.667, Move.blinky, Draw.ghost,  ghostOnTileChanged, (_x, _y) => AI.ghostTileCenter(gameState.blinky));
-    gameState.inky   = new GameObject('cyan',    START.inky.x,   START.inky.y,   0.667, Move.inky,   Draw.ghost,  ghostOnTileChanged, (_x, _y) => AI.ghostTileCenter(gameState.inky));
-    gameState.pinky  = new GameObject('hotpink', START.pinky.x,  START.pinky.y,  0.667, Move.pinky,  Draw.ghost,  ghostOnTileChanged, (_x, _y) => AI.ghostTileCenter(gameState.pinky));
-    gameState.sue    = new GameObject('orange',  START.sue.x,    START.sue.y,    0.667, Move.sue,    Draw.ghost,  ghostOnTileChanged, (_x, _y) => AI.ghostTileCenter(gameState.sue));
+    gameState.blinky = new GameObject('red',     START.blinky.x, START.blinky.y, 0.667, Move.blinky, Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.blinky));
+    gameState.inky   = new GameObject('cyan',    START.inky.x,   START.inky.y,   0.667, Move.inky,   Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.inky));
+    gameState.pinky  = new GameObject('hotpink', START.pinky.x,  START.pinky.y,  0.667, Move.pinky,  Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.pinky));
+    gameState.sue    = new GameObject('orange',  START.sue.x,    START.sue.y,    0.667, Move.sue,    Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.sue));
 
     gameState.gameObjects = [gameState.pacman, gameState.blinky, gameState.inky, gameState.pinky, gameState.sue];
     gameState.ghosts      = [gameState.blinky, gameState.inky, gameState.pinky, gameState.sue];
+
+    // All ghosts start in scatter mode
+    for (const ghost of gameState.ghosts) {
+        ghost.ghostMode = 'scatter';
+    }
 }
+
+// ── Main Update Loop ──────────────────────────────────────────────────────────
 
 function update(): void {
     Time.update();
 
     if (!gameState.frozen && !gameState.gameOver) {
         Input.update();
+        updateScatterChaseMode(Time.deltaTime);
+        updateFrightenedMode();
     }
 
     Draw.level();
@@ -139,6 +297,8 @@ function update(): void {
     for (const go of gameState.gameObjects) {
         go.update();
     }
+
+    Draw.scorePopups();
 
     if (!gameState.frozen && !gameState.gameOver) {
         checkCollisions();

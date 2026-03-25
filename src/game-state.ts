@@ -11,6 +11,14 @@ export const gameState = {
     gameObjects: [] as IGameObject[],
     ghosts: [] as IGameObject[],
     frozen: false,
+    pacmanFrozen: false,
     gameOver: false,
     level: 1,
+    // Scatter/chase mode state (Phase 2)
+    scatterChaseIndex: 0,
+    scatterChaseElapsed: 0,
+    // Frightened mode state (Phase 4)
+    frightenedEnd: 0,
+    ghostEatenChain: 0,
+    scorePopups: [] as Array<{ x: number; y: number; score: number; endTime: number }>,
 };
