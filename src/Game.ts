@@ -171,6 +171,7 @@ function setupTouchControls(): void {
         } else {
             Input.bufferedDir = dy < 0 ? 'up' : 'down';
         }
+        Input.bufferedDirFramesLeft = Input.BUFFER_FRAMES;
     }
 
     document.addEventListener('touchstart', (e: TouchEvent) => {

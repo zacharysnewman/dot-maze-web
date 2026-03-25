@@ -7,6 +7,8 @@ export class Input {
     static upPressed = false;
     static downPressed = false;
     static bufferedDir: Direction | null = null;
+    static bufferedDirFramesLeft = 0;
+    static readonly BUFFER_FRAMES = 8;
 
     static checkKeyDown(e: KeyboardEvent): void {
         switch (e.keyCode) {
@@ -35,16 +37,24 @@ export class Input {
         if (Input.rightPressed && (pacman.rightObject()  ?? 0) > 2) pacman.moveDir = 'right';
         if (Input.downPressed  && (pacman.bottomObject() ?? 0) > 2) pacman.moveDir = 'down';
 
-        // Touch: fire-and-forget — apply once immediately, then discard
+        // Touch: retry each frame until the turn is valid or the buffer expires
         if (Input.bufferedDir !== null) {
             const dir = Input.bufferedDir;
-            Input.bufferedDir = null;
             const tileOpen =
                 dir === 'left'  ? (pacman.leftObject()   ?? 0) > 2 :
                 dir === 'right' ? (pacman.rightObject()  ?? 0) > 2 :
                 dir === 'up'    ? (pacman.topObject()    ?? 0) > 2 :
                                   (pacman.bottomObject() ?? 0) > 2;
-            if (tileOpen) pacman.moveDir = dir;
+            if (tileOpen) {
+                pacman.moveDir = dir;
+                Input.bufferedDir = null;
+                Input.bufferedDirFramesLeft = 0;
+            } else {
+                Input.bufferedDirFramesLeft--;
+                if (Input.bufferedDirFramesLeft <= 0) {
+                    Input.bufferedDir = null;
+                }
+            }
         }
     }
 }
