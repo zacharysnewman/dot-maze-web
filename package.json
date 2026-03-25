@@ -2,8 +2,8 @@
   "name": "pacman-ts",
   "version": "1.0.0",
   "scripts": {
-    "build": "tsc --noEmit && esbuild src-ts/Game.ts --bundle --outfile=dist/bundle.js",
-    "dev": "esbuild src-ts/Game.ts --bundle --outfile=dist/bundle.js --watch",
+    "build": "tsc --noEmit && esbuild src/Game.ts --bundle --outfile=dist/bundle.js",
+    "dev": "esbuild src/Game.ts --bundle --outfile=dist/bundle.js --watch",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
