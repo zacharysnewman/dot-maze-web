@@ -29,24 +29,22 @@ export class Input {
     static update(): void {
         const pacman = gameState.pacman;
 
-        // Immediate keys override the buffer
-        if (Input.leftPressed)  Input.bufferedDir = 'left';
-        if (Input.upPressed)    Input.bufferedDir = 'up';
-        if (Input.rightPressed) Input.bufferedDir = 'right';
-        if (Input.downPressed)  Input.bufferedDir = 'down';
+        // Keyboard: check each frame while key is held
+        if (Input.leftPressed  && (pacman.leftObject()   ?? 0) > 2) pacman.moveDir = 'left';
+        if (Input.upPressed    && (pacman.topObject()    ?? 0) > 2) pacman.moveDir = 'up';
+        if (Input.rightPressed && (pacman.rightObject()  ?? 0) > 2) pacman.moveDir = 'right';
+        if (Input.downPressed  && (pacman.bottomObject() ?? 0) > 2) pacman.moveDir = 'down';
 
+        // Touch: fire-and-forget — apply once immediately, then discard
         if (Input.bufferedDir !== null) {
             const dir = Input.bufferedDir;
+            Input.bufferedDir = null;
             const tileOpen =
                 dir === 'left'  ? (pacman.leftObject()   ?? 0) > 2 :
                 dir === 'right' ? (pacman.rightObject()  ?? 0) > 2 :
                 dir === 'up'    ? (pacman.topObject()    ?? 0) > 2 :
                                   (pacman.bottomObject() ?? 0) > 2;
-
-            if (tileOpen) {
-                pacman.moveDir = dir;
-                Input.bufferedDir = null;
-            }
+            if (tileOpen) pacman.moveDir = dir;
         }
     }
 }
