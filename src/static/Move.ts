@@ -8,6 +8,7 @@ import type { IGameObject } from '../types';
 
 export class Move {
     static pacman(): void {
+        if (gameState.frozen) return;
         Move.moveObject(gameState.pacman);
 
         const p = gameState.pacman;
@@ -19,12 +20,24 @@ export class Move {
     }
 
     static blinky(): void {
+        if (gameState.frozen) return;
         Move.moveObject(gameState.blinky);
     }
 
-    static inky(): void {}
-    static pinky(): void {}
-    static sue(): void {}
+    static inky(): void {
+        if (gameState.frozen) return;
+        Move.moveObject(gameState.inky);
+    }
+
+    static pinky(): void {
+        if (gameState.frozen) return;
+        Move.moveObject(gameState.pinky);
+    }
+
+    static sue(): void {
+        if (gameState.frozen) return;
+        Move.moveObject(gameState.sue);
+    }
 
     static moveObject(obj: IGameObject): void {
         const speed = 2 * obj.moveSpeed;

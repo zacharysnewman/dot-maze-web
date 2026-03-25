@@ -21,6 +21,7 @@ export class AI {
     ];
 
     static ghostTileCenter(obj: IGameObject): void {
+        if (gameState.frozen) return;
         const myX = obj.roundedX();
         const myY = obj.roundedY();
         const pX  = gameState.pacman.roundedX();
@@ -51,6 +52,5 @@ export class AI {
         }
 
         obj.moveDir = bestDir;
-        console.log(obj.moveDir);
     }
 }

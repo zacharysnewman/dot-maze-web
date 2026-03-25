@@ -1,6 +1,7 @@
 import { unit, baseUnit, gridW, gridH } from '../constants';
 import { gameState } from '../game-state';
 import { Levels } from './Levels';
+import { Stats } from './Stats';
 import { Time } from './Time';
 
 type WallDrawFn = (x: number, y: number) => void;
@@ -229,6 +230,53 @@ export class Draw {
         ctx.moveTo(x + unit + unit / 2, y - unit / 2);
         ctx.lineTo(x + 4 * unit + unit / 2, y - unit / 2);
         ctx.stroke();
+    }
+
+    static hud(): void {
+        const ctx = gameState.ctx;
+        const fontSize = Math.round(unit * 0.8);
+        ctx.font = `bold ${fontSize}px monospace`;
+        ctx.textBaseline = 'top';
+
+        // Score (top-left)
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'left';
+        ctx.fillText('1UP', unit, unit * 0.1);
+        ctx.fillText(String(Stats.currentScore).padStart(6, ' '), unit, unit * 1.0);
+
+        // High score (top-center)
+        ctx.textAlign = 'center';
+        ctx.fillText('HIGH SCORE', gameState.canvas.width / 2, unit * 0.1);
+        ctx.fillText(String(Stats.highScore).padStart(6, ' '), gameState.canvas.width / 2, unit * 1.0);
+
+        // Level (top-right)
+        ctx.textAlign = 'right';
+        ctx.fillText(`L${gameState.level}`, gameState.canvas.width - unit, unit * 0.1);
+
+        // Lives (bottom row, represented as small yellow circles)
+        const livesY = (gridH - 1) * unit + unit / 2;
+        ctx.fillStyle = 'yellow';
+        for (let i = 0; i < Stats.lives; i++) {
+            ctx.beginPath();
+            ctx.arc(unit + i * unit * 1.4, livesY, unit * 0.35, 0.2 * Math.PI, 1.8 * Math.PI, false);
+            ctx.fill();
+        }
+    }
+
+    static gameOverScreen(): void {
+        const ctx = gameState.ctx;
+        const cx = gameState.canvas.width / 2;
+        const cy = gameState.canvas.height / 2;
+        const fontSize = Math.round(unit * 1.2);
+
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, 0, gameState.canvas.width, gameState.canvas.height);
+
+        ctx.font = `bold ${fontSize}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'red';
+        ctx.fillText('GAME OVER', cx, cy);
     }
 
     static level(): void {

@@ -10,4 +10,7 @@ export const gameState = {
     sue: null as unknown as IGameObject,
     gameObjects: [] as IGameObject[],
     ghosts: [] as IGameObject[],
+    frozen: false,
+    gameOver: false,
+    level: 1,
 };
