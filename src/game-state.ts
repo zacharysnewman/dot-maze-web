@@ -47,4 +47,5 @@ export const gameState = {
     debugInkyPivot: null as { x: number; y: number } | null,
     debugPinkyAhead: null as { x: number; y: number } | null,
     debugClydeDistToPacman: 0,
+    debugShowRedZones: false,
 };

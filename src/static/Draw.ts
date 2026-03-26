@@ -434,9 +434,54 @@ export class Draw {
     static debug(): void {
         if (!gameState.debugEnabled) return;
         const ctx = gameState.ctx;
+        if (gameState.debugShowRedZones)     Draw.debugRedZones(ctx);
         if (gameState.debugShowTargetTiles)  Draw.debugTargetTiles(ctx);
         if (gameState.debugShowTargetingViz) Draw.debugTargetingViz(ctx);
         if (gameState.debugShowModes)        Draw.debugModes(ctx);
+    }
+
+    private static debugRedZones(ctx: CanvasRenderingContext2D): void {
+        // The 4 T-junctions where ghosts cannot turn upward in scatter/chase mode.
+        // Green = restriction lifted (frightened), Red = upward blocked (scatter/chase).
+        const RED_ZONES = [{ x: 6, y: 14 }, { x: 21, y: 14 }, { x: 6, y: 26 }, { x: 21, y: 26 }];
+        const blocked = gameState.frightenedRemaining <= 0;
+        const color   = blocked ? 'red' : '#00e676';
+
+        for (const { x, y } of RED_ZONES) {
+            const px = x * unit, py = y * unit;
+            const cx = px + unit / 2, cy = py + unit / 2;
+            const r  = unit * 0.28;
+            ctx.save();
+            // Tile fill
+            ctx.globalAlpha = 0.30;
+            ctx.fillStyle = color;
+            ctx.fillRect(px, py, unit, unit);
+            ctx.globalAlpha = 0.85;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(px + 1, py + 1, unit - 2, unit - 2);
+            // Upward arrow
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy + r);
+            ctx.lineTo(cx, cy - r);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cx - r * 0.5, cy - r * 0.45);
+            ctx.lineTo(cx, cy - r);
+            ctx.lineTo(cx + r * 0.5, cy - r * 0.45);
+            ctx.stroke();
+            // Prohibition slash (only when blocked)
+            if (blocked) {
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(cx - r * 0.65, cy - r * 0.75);
+                ctx.lineTo(cx + r * 0.65, cy - r * 0.1);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
     }
 
     private static debugArrow(
