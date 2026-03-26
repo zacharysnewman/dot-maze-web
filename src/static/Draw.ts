@@ -434,9 +434,51 @@ export class Draw {
     static debug(): void {
         if (!gameState.debugEnabled) return;
         const ctx = gameState.ctx;
+        if (gameState.debugShowRedZones)     Draw.debugRedZones(ctx);
         if (gameState.debugShowTargetTiles)  Draw.debugTargetTiles(ctx);
         if (gameState.debugShowTargetingViz) Draw.debugTargetingViz(ctx);
         if (gameState.debugShowModes)        Draw.debugModes(ctx);
+    }
+
+    private static debugRedZones(ctx: CanvasRenderingContext2D): void {
+        // The 4 T-junctions where ghosts cannot turn upward in scatter/chase mode
+        const RED_ZONES = [{ x: 6, y: 14 }, { x: 21, y: 14 }, { x: 6, y: 26 }, { x: 21, y: 26 }];
+        for (const { x, y } of RED_ZONES) {
+            const px = x * unit, py = y * unit;
+            // Tile fill
+            ctx.save();
+            ctx.globalAlpha = 0.30;
+            ctx.fillStyle = 'red';
+            ctx.fillRect(px, py, unit, unit);
+            ctx.globalAlpha = 0.85;
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(px + 1, py + 1, unit - 2, unit - 2);
+            // No-up symbol: upward arrow with a horizontal bar through it
+            const cx = px + unit / 2, cy = py + unit / 2;
+            const r = unit * 0.28;
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 2;
+            // Arrow shaft upward
+            ctx.beginPath();
+            ctx.moveTo(cx, cy + r);
+            ctx.lineTo(cx, cy - r);
+            ctx.stroke();
+            // Arrow head
+            ctx.beginPath();
+            ctx.moveTo(cx - r * 0.5, cy - r * 0.45);
+            ctx.lineTo(cx, cy - r);
+            ctx.lineTo(cx + r * 0.5, cy - r * 0.45);
+            ctx.stroke();
+            // Prohibition bar (diagonal slash across arrow head area)
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(cx - r * 0.65, cy - r * 0.75);
+            ctx.lineTo(cx + r * 0.65, cy - r * 0.1);
+            ctx.stroke();
+            ctx.restore();
+        }
     }
 
     private static debugArrow(

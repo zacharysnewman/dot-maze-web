@@ -819,6 +819,7 @@ window.onload = function () {
             <label><input type="checkbox" id="dbg-targets"> Target tiles</label>
             <label><input type="checkbox" id="dbg-viz"> Targeting viz</label>
             <label><input type="checkbox" id="dbg-modes"> Ghost modes</label>
+            <label><input type="checkbox" id="dbg-redzones"> Red zones</label>
             <button id="dbg-pause">⏸ Pause</button>
         `;
         document.body.appendChild(panel);
@@ -836,6 +837,9 @@ window.onload = function () {
         };
         (document.getElementById('dbg-modes') as HTMLInputElement).onchange = (e) => {
             gameState.debugShowModes = (e.target as HTMLInputElement).checked;
+        };
+        (document.getElementById('dbg-redzones') as HTMLInputElement).onchange = (e) => {
+            gameState.debugShowRedZones = (e.target as HTMLInputElement).checked;
         };
         const pauseBtn = document.getElementById('dbg-pause') as HTMLButtonElement;
         pauseBtn.onclick = () => {
