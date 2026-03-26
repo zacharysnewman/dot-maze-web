@@ -80,9 +80,34 @@ export class AI {
             targetX = corner.x;
             targetY = corner.y;
         } else {
-            // chase — target Pac-Man
-            targetX = gameState.pacman.roundedX();
-            targetY = gameState.pacman.roundedY();
+            // chase — per-ghost authentic targeting
+            const pacman = gameState.pacman;
+            if (obj.color === 'hotpink') {
+                // Pinky: 4 tiles ahead of Pac-Man (with up overflow bug)
+                const ahead = AI.tilesAheadOfPacman(4);
+                targetX = ahead.x;
+                targetY = ahead.y;
+            } else if (obj.color === 'cyan') {
+                // Inky: doubled vector from Blinky through 2 tiles ahead of Pac-Man
+                const intermediate = AI.tilesAheadOfPacman(2);
+                const blinky = gameState.blinky;
+                targetX = 2 * intermediate.x - blinky.roundedX();
+                targetY = 2 * intermediate.y - blinky.roundedY();
+            } else if (obj.color === 'orange') {
+                // Clyde: target Pac-Man if ≥8 tiles away, else retreat to scatter corner
+                const dist = getDistance(obj.roundedX(), obj.roundedY(), pacman.roundedX(), pacman.roundedY());
+                if (dist >= 8) {
+                    targetX = pacman.roundedX();
+                    targetY = pacman.roundedY();
+                } else {
+                    targetX = 0;
+                    targetY = 34;
+                }
+            } else {
+                // Blinky: direct pursuit of Pac-Man's current tile
+                targetX = pacman.roundedX();
+                targetY = pacman.roundedY();
+            }
         }
 
         const canMoveLeft  = (obj.leftObject()   ?? 0) > 2 && obj.moveDir !== 'right';
@@ -110,6 +135,21 @@ export class AI {
         }
 
         obj.moveDir = bestDir;
+    }
+
+    // Returns the tile N steps ahead of Pac-Man in his movement direction.
+    // Reproduces the upward overflow bug from the original ROM:
+    // when Pac-Man faces up, both x and y are offset by -N (instead of just y).
+    static tilesAheadOfPacman(n: number): { x: number; y: number } {
+        const pacman = gameState.pacman;
+        const px = pacman.roundedX();
+        const py = pacman.roundedY();
+        switch (pacman.moveDir) {
+            case 'right': return { x: px + n, y: py     };
+            case 'left':  return { x: px - n, y: py     };
+            case 'down':  return { x: px,     y: py + n };
+            case 'up':    return { x: px - n, y: py - n }; // up overflow bug
+        }
     }
 
     // PRNG-based random direction selection for frightened ghosts

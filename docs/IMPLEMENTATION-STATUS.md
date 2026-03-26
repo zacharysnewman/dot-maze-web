@@ -59,7 +59,7 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | Ghost body rendering | ✅ | `Draw.drawGhostBody()` |
 | Ghost eye rendering (static) | ✅ | `Draw.drawGhostEyes()` — pupils don't track direction |
 | Ghost movement (Blinky) | ✅ | `Move.blinky()` + `AI.ghostTileCenter()` |
-| Ghost movement (Pinky / Inky / Clyde) | ✅ | `Move.pinky/inky/sue()` — all use same chase-Pac-Man logic for now; authentic personalities in Phase 5 |
+| Ghost movement (Pinky / Inky / Clyde) | ✅ | `Move.pinky/inky/clyde()` — authentic per-ghost targeting via `AI.ghostTileCenter()` |
 | No-reverse rule | ✅ | Opposite direction excluded in `AI.ghostTileCenter()` |
 | Up/Left/Down/Right tie-break priority | ✅ | Push order in `AI.ghostTileCenter()` matches spec |
 | Level-based ghost speed | ❌ | Fixed speed for all ghosts |
@@ -92,13 +92,13 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | Ghost | Chase Target | Status | Notes |
 |---|---|---|---|
 | Blinky | Pac-Man's current tile | ✅ | `AI.ghostTileCenter()` uses `pacman.roundedX/Y()` |
-| Pinky | 4 tiles ahead of Pac-Man (with up-bug) | ⚠️ | Currently uses same logic as Blinky; authentic algorithm in Phase 5 |
-| Inky | Doubled vector from Blinky to 2-ahead of Pac-Man (with up-bug) | ⚠️ | Currently uses same logic as Blinky; authentic algorithm in Phase 5 |
-| Clyde | Pac-Man if ≥8 tiles away, else scatter corner | ⚠️ | Currently uses same logic as Blinky; authentic algorithm in Phase 5 |
+| Pinky | 4 tiles ahead of Pac-Man (with up-bug) | ✅ | `AI.tilesAheadOfPacman(4)` — up-bug reproduced |
+| Inky | Doubled vector from Blinky to 2-ahead of Pac-Man (with up-bug) | ✅ | `2 * intermediate - blinky.tile`; up-bug reproduced |
+| Clyde | Pac-Man if ≥8 tiles away, else scatter corner | ✅ | Euclidean distance check; retreats to (0,34) when close |
 | All — Scatter | Fixed corner target tile | ✅ | `SCATTER_TARGETS` in `AI.ts` — Blinky(26,0) Pinky(2,0) Inky(27,34) Clyde(0,34) |
 | All — Frightened | PRNG random wandering | ✅ | `AI.ghostFrightenedMove()` — LCG PRNG, clockwise fallback |
 | All — Eyes | Fixed ghost house return tile | ✅ | Targets (13,14); revival on arrival |
-| Pinky/Inky upward overflow bug | ❌ | Should reproduce authentic ROM behavior |
+| Pinky/Inky upward overflow bug | ✅ | `AI.tilesAheadOfPacman()` — facing up applies offset (-n, -n) |
 
 ---
 
@@ -202,14 +202,14 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | Pac-Man | 9 | 12 | 75% |
 | Ghosts (shared) | 10 | 16 | 63% |
 | Ghost AI — modes | 7 | 7 | 100% |
-| Ghost AI — targeting | 4 | 8 | 50% |
+| Ghost AI — targeting | 8 | 8 | 100% |
 | Ghost house & release | 12 | 12 | 100% |
 | Cruise Elroy | 0 | 6 | 0% |
 | Frightened mode | 11 | 12 | 92% |
 | Lives & game flow | 8 | 10 | 80% |
 | HUD & display | 6 | 9 | 67% |
 | Audio | 0 | 1 | 0% |
-| **Overall** | **77** | **103** | **~75%** |
+| **Overall** | **81** | **103** | **~79%** |
 
 ---
 
@@ -221,7 +221,7 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | Phase 2 — Scatter/Chase Mode Switching | ✅ Complete | Timer, corner targeting, reversal, reset |
 | Phase 3 — Ghost House & Release | ✅ Complete | House lock, personal counters, global counter, idle timer, bounce, exit direction |
 | Phase 4 — Frightened Mode | ✅ Complete | Energizer trigger, blue visuals, flash, PRNG, eating, eyes, score chain; mobile continuous swipe added |
-| Phase 5 — Authentic Ghost AI | ❌ Not started | |
+| Phase 5 — Authentic Ghost AI | ✅ Complete | Pinky 4-ahead, Inky Blinky-vector, Clyde 8-tile proximity, up overflow bug |
 | Phase 6 — Speed System | ❌ Not started | |
 | Phase 7 — Level Progression & Fruit | ❌ Not started | |
 | Phase 8 — Cruise Elroy | ❌ Not started | |
