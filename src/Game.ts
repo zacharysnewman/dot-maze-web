@@ -554,6 +554,8 @@ function loseLife(): void {
 
     if (Stats.lives <= 0) {
         gameState.gameOver = true;
+        Stats.saveScore(Stats.currentScore);
+        Time.addTimer(4.0, () => { returningToMenu = true; });
         return;
     }
 
@@ -646,6 +648,13 @@ function initializeLevel(): void {
 function update(): void {
     Time.update();
 
+    if (returningToMenu) {
+        returningToMenu = false;
+        gameStarted = false;
+        startScreenLoop();
+        return; // end this loop; startScreenLoop starts its own rAF
+    }
+
     if (!gameState.frozen && !gameState.gameOver) {
         Input.update();
         updateScatterChaseMode(Time.deltaTime);
@@ -681,6 +690,27 @@ function update(): void {
 }
 
 function start(): void {
+    // Full game state reset for a fresh play
+    Stats.reset();
+    gameState.level = 1;
+    gameState.scatterChaseIndex = 0;
+    gameState.scatterChaseElapsed = 0;
+    gameState.frightenedRemaining = 0;
+    gameState.ghostEatenChain = 0;
+    gameState.scorePopups = [];
+    gameState.useGlobalDotCounter = false;
+    gameState.globalDotCounter = 0;
+    gameState.idleTimer = 0;
+    gameState.dotsEaten = 0;
+    gameState.fruitActive = null;
+    gameState.fruitSpawned1 = false;
+    gameState.fruitSpawned2 = false;
+    gameState.fruitHistory = [];
+    gameState.elroyLevel = 0;
+    gameState.elroySuspended = false;
+    gameState.gameOver = false;
+    AI.resetPrng();
+
     Time.setup();
     initializeLevel();
     gameState.frozen = true;
@@ -695,22 +725,44 @@ function start(): void {
 // ── Start Screen ──────────────────────────────────────────────────────────────
 
 let gameStarted = false;
+let returningToMenu = false;
 
 function startScreenLoop(): void {
     if (gameStarted) return;
     const ctx = gameState.ctx;
     const w = gameState.canvas.width;
-    const h = gameState.canvas.height;
     ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, w, gameState.canvas.height);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+
+    // Title
     ctx.fillStyle = 'yellow';
     ctx.font = `bold ${unit * 2}px monospace`;
-    ctx.fillText('PAC-MAN', w / 2, h / 2 - unit * 2);
+    ctx.fillText('PAC-MAN', w / 2, unit * 5);
+
+    // High scores
+    const scores = Stats.loadHighScores();
+    ctx.fillStyle = 'cyan';
+    ctx.font = `bold ${Math.round(unit * 0.9)}px monospace`;
+    ctx.fillText('HIGH SCORES', w / 2, unit * 10);
+    ctx.fillStyle = 'white';
+    if (scores.length === 0) {
+        ctx.fillStyle = '#666';
+        ctx.fillText('none yet', w / 2, unit * 12);
+    } else {
+        for (let i = 0; i < scores.length; i++) {
+            const rank = `${i + 1}.`.padStart(3);
+            const score = String(scores[i]).padStart(7);
+            ctx.fillText(`${rank}  ${score}`, w / 2, unit * 11.5 + i * unit * 1.5);
+        }
+    }
+
+    // Tap to start
     ctx.fillStyle = 'white';
     ctx.font = `bold ${Math.round(unit * 0.9)}px monospace`;
-    ctx.fillText('TAP TO START', w / 2, h / 2 + unit);
+    ctx.fillText('TAP TO START', w / 2, unit * 31);
+
     window.requestAnimationFrame(startScreenLoop);
 }
 
@@ -871,8 +923,6 @@ window.onload = function () {
         if (gameStarted) return;
         gameStarted = true;
         Sound.init();
-        document.removeEventListener('click', launchGame);
-        document.removeEventListener('touchstart', launchGame as EventListener);
         start();
     }
 
