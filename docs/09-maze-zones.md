@@ -59,7 +59,7 @@ There are **two pink zones** — the left and right halves of the **side tunnel*
 | Feature | Status | Notes |
 |---|---|---|
 | Tunnel teleport (Pac-Man) | ✅ Implemented | `Move.moveObject()` wraps x position at grid edges |
-| Tunnel teleport (ghosts) | ❌ Not implemented | Only Pac-Man wraps; ghosts walk off-screen |
-| Tunnel speed penalty (ghosts) | ❌ Not implemented | No zone detection or speed reduction |
+| Tunnel teleport (ghosts) | ✅ Implemented | `AI.ts` treats off-grid as passable on tunnel row; ghosts wrap |
+| Tunnel speed penalty (ghosts) | ✅ Implemented | `updateGhostTunnelSpeeds()` in `Game.ts` — 40% L1, 45% L2–4, 50% L5+ |
 | Red zone upward-turn restriction | ❌ Not implemented | No intersection-specific turn rules |
-| Red zone ignored in frightened | ❌ Not implemented | Frightened mode itself not implemented |
+| Red zone ignored in frightened | ❌ Not implemented | Depends on red zone implementation |

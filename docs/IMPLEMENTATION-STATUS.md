@@ -166,7 +166,7 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | Game over on 0 lives | ✅ | `gameState.gameOver` halts updates; overlay rendered |
 | Level clear on all dots eaten | ✅ | `levelClear()` in `Game.ts` — 1.5 s freeze then map reset |
 | Level counter increment | ✅ | `gameState.level++` on level clear |
-| Extra life at 10,000 pts | ❌ | |
+| Extra life at 10,000 pts | ✅ | `Stats.addToScore()` — `extraLifeAwarded` flag prevents duplicates |
 | Pass-through collision edge case | ❌ | |
 
 ---
@@ -179,8 +179,8 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | High score display | ✅ | `Draw.hud()` — top-center |
 | Lives display | ✅ | `Draw.hud()` — Pac-Man icons along bottom |
 | Level number display | ✅ | `Draw.hud()` — top-right as `L{n}` |
-| Fruit / level history display | ❌ | Last 7 fruit symbols not rendered |
-| Fruit sprite on screen | ❌ | |
+| Fruit / level history display | ✅ | `Draw.fruitCounter()` — last 7 symbols, right-aligned at bottom |
+| Fruit sprite on screen | ✅ | `Draw.fruit()` — emoji rendered at fruit spawn position |
 | Ghost score display on eat | ✅ | `Draw.scorePopups()` — cyan score shown at capture location for 1 s |
 | Ready! text | ❌ | |
 | Game Over text | ✅ | `Draw.gameOverScreen()` — red overlay text |
@@ -207,10 +207,10 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | Ghost house & release | 12 | 12 | 100% |
 | Cruise Elroy | 0 | 6 | 0% |
 | Frightened mode | 12 | 13 | 92% |
-| Lives & game flow | 8 | 10 | 80% |
-| HUD & display | 6 | 9 | 67% |
+| Lives & game flow | 9 | 10 | 90% |
+| HUD & display | 8 | 9 | 89% |
 | Audio | 0 | 1 | 0% |
-| **Overall** | **87** | **104** | **~84%** |
+| **Overall** | **90** | **104** | **~87%** |
 
 ---
 
@@ -224,7 +224,7 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | Phase 4 — Frightened Mode | ✅ Complete | Energizer trigger, blue visuals, flash, PRNG, eating, eyes, score chain; all ghosts freeze on eat (eyes exempt); mobile continuous swipe added |
 | Phase 5 — Authentic Ghost AI | ✅ Complete | Pinky 4-ahead, Inky Blinky-vector, Clyde 8-tile proximity, up overflow bug |
 | Phase 6 — Speed System | ✅ Complete | Level-based Pac-Man speeds, ghost normal/fright/tunnel speeds, ghost tunnel teleport and wrap |
-| Phase 7 — Level Progression & Fruit | ❌ Not started | |
+| Phase 7 — Level Progression & Fruit | ✅ Complete | Per-level frightened duration, fruit spawning/scoring, extra life, fruit counter display |
 | Phase 8 — Cruise Elroy | ❌ Not started | |
 | Phase 9 — Cornering & Input Polish | ❌ Not started | |
 | Phase 10 — Polish & Edge Cases | ❌ Not started | |
