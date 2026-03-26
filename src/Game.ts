@@ -22,6 +22,45 @@ const START = {
 // Ghost eye-return speed (constant regardless of level)
 const SPEED_EYES = 1.5;
 
+// ── Fruit (Phase 7) ───────────────────────────────────────────────────────────
+
+// Fruit spawns below the ghost house at tile (13, 20)
+const FRUIT_X = 13 * unit + unit / 2;
+const FRUIT_Y = 20 * unit + unit / 2;
+const FRUIT_DURATION = 9.5; // seconds
+
+function getFruitPoints(level: number): number {
+    if (level === 1) return 100;
+    if (level === 2) return 300;
+    if (level <= 4)  return 500;
+    if (level <= 6)  return 700;
+    if (level <= 8)  return 1000;
+    if (level <= 10) return 2000;
+    if (level <= 12) return 3000;
+    return 5000;
+}
+
+function spawnFruit(): void {
+    gameState.fruitActive = { x: FRUIT_X, y: FRUIT_Y, endTime: Time.timeSinceStart + FRUIT_DURATION };
+}
+
+function updateFruit(): void {
+    if (gameState.fruitActive && Time.timeSinceStart >= gameState.fruitActive.endTime) {
+        gameState.fruitActive = null;
+    }
+}
+
+function checkFruitCollision(): void {
+    if (!gameState.fruitActive) return;
+    const { x: fx, y: fy } = gameState.fruitActive;
+    if (Math.abs(gameState.pacman.x - fx) < unit && Math.abs(gameState.pacman.y - fy) < unit) {
+        const score = getFruitPoints(gameState.level);
+        Stats.addToScore(score);
+        gameState.scorePopups.push({ x: fx, y: fy, score, endTime: Time.timeSinceStart + 2.0 });
+        gameState.fruitActive = null;
+    }
+}
+
 // ── Speed Table (Phase 6) ─────────────────────────────────────────────────────
 // All values are fractions of max speed (1.0 = 100%)
 
@@ -265,6 +304,16 @@ function incrementDotCounters(): void {
     // Reset idle timer every time a dot is eaten
     gameState.idleTimer = 0;
 
+    // Track total dots eaten this level for fruit spawning
+    gameState.dotsEaten++;
+    if (gameState.dotsEaten === 70 && !gameState.fruitSpawned1) {
+        gameState.fruitSpawned1 = true;
+        spawnFruit();
+    } else if (gameState.dotsEaten === 170 && !gameState.fruitSpawned2) {
+        gameState.fruitSpawned2 = true;
+        spawnFruit();
+    }
+
     if (gameState.useGlobalDotCounter) {
         gameState.globalDotCounter++;
         const gc = gameState.globalDotCounter;
@@ -369,6 +418,7 @@ function resetPositions(afterDeath = false): void {
     gameState.ghostEatenChain = 0;
     gameState.scorePopups = [];
     gameState.pacmanFrozen = false;
+    gameState.fruitActive = null;
     resetScatterChaseTimer();
     AI.resetPrng();
 
@@ -388,9 +438,14 @@ function countRemainingDots(): number {
 
 function levelClear(): void {
     gameState.frozen = true;
+    gameState.fruitHistory.push(gameState.level);
     Time.addTimer(1.5, () => {
         gameState.level++;
         Levels.levelDynamic = Levels.level1.map(row => [...row]);
+        gameState.dotsEaten = 0;
+        gameState.fruitSpawned1 = false;
+        gameState.fruitSpawned2 = false;
+        gameState.fruitActive = null;
         resetPositions(false);
         gameState.frozen = false;
     });
@@ -495,6 +550,7 @@ function update(): void {
         updateFrightenedMode();
         updateGhostTunnelSpeeds();
         updateIdleTimer(Time.deltaTime);
+        updateFruit();
     }
 
     Draw.level();
@@ -507,6 +563,7 @@ function update(): void {
 
     if (!gameState.frozen && !gameState.gameOver) {
         checkCollisions();
+        checkFruitCollision();
     }
 
     Draw.hud();

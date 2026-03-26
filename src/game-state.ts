@@ -27,4 +27,10 @@ export const gameState = {
     personalDotCounters: {} as Record<string, number>,
     modeChangesInHouse: {} as Record<string, number>,
     idleTimer: 0,
+    // Fruit state (Phase 7)
+    dotsEaten: 0,
+    fruitActive: null as null | { x: number; y: number; endTime: number },
+    fruitSpawned1: false,
+    fruitSpawned2: false,
+    fruitHistory: [] as number[],
 };

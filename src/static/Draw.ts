@@ -95,6 +95,46 @@ export class Draw {
         return level >= 19 ? 0 : (FRIGHTENED_FLASH_COUNT[level] ?? 0);
     }
 
+    static getFruitEmoji(level: number): string {
+        if (level === 1) return '🍒';
+        if (level === 2) return '🍓';
+        if (level <= 4)  return '🍊';
+        if (level <= 6)  return '🍎';
+        if (level <= 8)  return '🍈';
+        if (level <= 10) return '⭐';
+        if (level <= 12) return '🔔';
+        return '🗝️';
+    }
+
+    static fruit(): void {
+        if (!gameState.fruitActive) return;
+        const { x, y } = gameState.fruitActive;
+        const ctx = gameState.ctx;
+        const fontSize = Math.round(unit * 0.9);
+        ctx.font = `${fontSize}px serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(Draw.getFruitEmoji(gameState.level), x, y);
+    }
+
+    static fruitCounter(): void {
+        // Show current level's fruit + completed levels (up to last 7 total)
+        const allItems = [...gameState.fruitHistory, gameState.level];
+        const maxDisplay = 7;
+        const displayItems = allItems.slice(-maxDisplay);
+        const ctx = gameState.ctx;
+        const fontSize = Math.round(unit * 0.85);
+        ctx.font = `${fontSize}px serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const livesY = (gridH - 1) * unit + unit / 2;
+        const startX = gameState.canvas.width - unit;
+        for (let i = 0; i < displayItems.length; i++) {
+            const lvl = displayItems[displayItems.length - 1 - i];
+            ctx.fillText(Draw.getFruitEmoji(lvl), startX - i * unit * 1.3, livesY);
+        }
+    }
+
     static ghost(obj: IGameObject): void {
         const { color, x, y, scale, ghostMode } = obj;
 
@@ -319,6 +359,9 @@ export class Draw {
             ctx.arc(unit + i * unit * 1.4, livesY, unit * 0.35, 0.2 * Math.PI, 1.8 * Math.PI, false);
             ctx.fill();
         }
+
+        // Fruit/level counter (bottom-right, last 7 fruits)
+        Draw.fruitCounter();
     }
 
     static gameOverScreen(): void {
@@ -358,5 +401,6 @@ export class Draw {
         Draw.walls();
         Draw.cageGate();
         Draw.dots();
+        Draw.fruit();
     }
 }
