@@ -8,12 +8,16 @@ if (fs.existsSync('dist')) {
         .forEach(f => fs.unlinkSync(`dist/${f}`));
 }
 
+// Inject a build timestamp so the content hash always changes, busting caches
+const buildStamp = `// built: ${Date.now()}\n`;
+
 esbuild.build({
     entryPoints: { bundle: 'src/Game.ts' },
     bundle: true,
     outdir: 'dist',
     entryNames: '[name]-[hash]',
     metafile: true,
+    banner: { js: buildStamp },
 }).then(result => {
     const outputPath = Object.keys(result.metafile.outputs)[0]; // e.g. "dist/bundle-A1B2C3D4.js"
 
