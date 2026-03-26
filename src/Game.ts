@@ -694,6 +694,28 @@ function start(): void {
     update();
 }
 
+// ── Start Screen ──────────────────────────────────────────────────────────────
+
+let gameStarted = false;
+
+function startScreenLoop(): void {
+    if (gameStarted) return;
+    const ctx = gameState.ctx;
+    const w = gameState.canvas.width;
+    const h = gameState.canvas.height;
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, w, h);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'yellow';
+    ctx.font = `bold ${unit * 2}px monospace`;
+    ctx.fillText('PAC-MAN', w / 2, h / 2 - unit * 2);
+    ctx.fillStyle = 'white';
+    ctx.font = `bold ${Math.round(unit * 0.9)}px monospace`;
+    ctx.fillText('TAP TO START', w / 2, h / 2 + unit);
+    window.requestAnimationFrame(startScreenLoop);
+}
+
 function setupTouchControls(): void {
     let touchStartX = 0;
     let touchStartY = 0;
@@ -751,12 +773,23 @@ window.onload = function () {
     gameState.canvas = canvas;
     gameState.ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
 
-    document.onkeydown = (e: KeyboardEvent) => { Sound.init(); Input.checkKeyDown(e); };
-    document.onkeyup   = Input.checkKeyUp;
-
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
     setupTouchControls();
 
-    start();
+    function launchGame(): void {
+        if (gameStarted) return;
+        gameStarted = true;
+        Sound.init();
+        document.removeEventListener('click', launchGame);
+        document.removeEventListener('touchstart', launchGame as EventListener);
+        start();
+    }
+
+    document.onkeydown = (e: KeyboardEvent) => { launchGame(); Input.checkKeyDown(e); };
+    document.onkeyup   = Input.checkKeyUp;
+    document.addEventListener('click', launchGame);
+    document.addEventListener('touchstart', launchGame as EventListener, { passive: false });
+
+    startScreenLoop();
 };
