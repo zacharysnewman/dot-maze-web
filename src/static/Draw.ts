@@ -150,7 +150,8 @@ export class Draw {
             const isFlashing = flashCount > 0 && timeLeft < flashDuration && timeLeft > 0;
             let ghostColor = '#0000cc';
             if (isFlashing) {
-                ghostColor = Math.floor(Time.frameCount / 7) % 2 === 0 ? '#0000cc' : 'white';
+                // Use wall-clock time so flash rate is consistent at any frame rate
+                ghostColor = Math.floor(Time.timeSinceStart * (60 / 7)) % 2 === 0 ? '#0000cc' : 'white';
             }
             Draw.drawGhostBody(ghostColor, x, y, scale);
             Draw.drawFrightenedEyes(x, y, scale, ghostColor);

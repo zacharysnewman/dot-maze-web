@@ -263,9 +263,10 @@ function eatGhost(ghost: IGameObject): void {
         endTime: Time.timeSinceStart + 1.0,
     });
 
-    // Freeze Pac-Man briefly while score is shown
+    // Freeze Pac-Man briefly while score is shown; popup stays visible for 1s
+    // but the freeze is shorter so other frightened ghosts don't stop as long
     gameState.pacmanFrozen = true;
-    Time.addTimer(1.0, () => { gameState.pacmanFrozen = false; });
+    Time.addTimer(0.5, () => { gameState.pacmanFrozen = false; });
 
     // Ghost becomes eyes and speeds home
     ghost.ghostMode = 'eyes';
@@ -276,6 +277,7 @@ function eatGhost(ghost: IGameObject): void {
 
 function releaseGhost(ghost: IGameObject): void {
     ghost.ghostMode = 'exiting';
+    ghost.moveSpeed = getGhostNormalSpeed(gameState.level);
 }
 
 function getNextHouseGhost(): IGameObject | null {
@@ -365,7 +367,7 @@ function makeGhostTileCentered(getGhost: () => IGameObject): (_x: number, _y: nu
         if (ghost.ghostMode === 'eyes' && ghost.roundedX() === 13 && ghost.roundedY() === 14) {
             ghost.x = 13 * unit + unit / 2; // exit column
             ghost.y = 17 * unit + unit / 2; // center of house interior
-            ghost.moveSpeed = 1.0;  // exit animation uses fixed speed
+            ghost.moveSpeed = getGhostNormalSpeed(gameState.level);
             ghost.ghostMode = 'exiting';
             return;
         }
