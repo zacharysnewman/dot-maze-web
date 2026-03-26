@@ -23,7 +23,10 @@ export class Move {
     static blinky(): void {
         if (gameState.frozen) return;
         if (gameState.pacmanFrozen && gameState.blinky.ghostMode !== 'eyes') return;
-        Move.moveObject(gameState.blinky);
+        const g = gameState.blinky;
+        if (g.ghostMode === 'house') { Move.ghostBounce(g); return; }
+        if (g.ghostMode === 'exiting') { Move.ghostExit(g); return; }
+        Move.moveObject(g);
     }
 
     static inky(): void {
