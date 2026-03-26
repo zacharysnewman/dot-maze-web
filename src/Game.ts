@@ -19,10 +19,78 @@ const START = {
     clyde:  { x: 15,   y: 17 },
 };
 
-// Ghost movement speeds — Phase 6 will replace these with a full speed table
-const SPEED_NORMAL     = 1.0;
-const SPEED_FRIGHTENED = 0.5;
-const SPEED_EYES       = 1.5;
+// Ghost eye-return speed (constant regardless of level)
+const SPEED_EYES = 1.5;
+
+// ── Speed Table (Phase 6) ─────────────────────────────────────────────────────
+// All values are fractions of max speed (1.0 = 100%)
+
+function getPacmanNormalSpeed(level: number): number {
+    if (level === 1) return 0.80;
+    if (level <= 4)  return 0.90;
+    if (level <= 20) return 1.00;
+    return 0.90; // level 21+
+}
+
+function getPacmanFrightSpeed(level: number): number {
+    if (level === 1) return 0.90;
+    if (level <= 4)  return 0.95;
+    if (level <= 20) return 1.00;
+    return 0.90; // level 21+ — no boost (same as normal)
+}
+
+function getGhostNormalSpeed(level: number): number {
+    if (level === 1) return 0.75;
+    if (level <= 4)  return 0.85;
+    return 0.95; // level 5+
+}
+
+function getGhostFrightSpeed(level: number): number {
+    if (level === 1) return 0.50;
+    if (level <= 4)  return 0.55;
+    return 0.60; // level 5+
+}
+
+function getGhostTunnelSpeed(level: number): number {
+    if (level === 1) return 0.40;
+    if (level <= 4)  return 0.45;
+    return 0.50; // level 5+
+}
+
+// Returns the speed Pac-Man should be moving at right now (used after a dot pause)
+function getCurrentPacmanSpeed(): number {
+    const anyFrightened = gameState.ghosts.some(g => g.ghostMode === 'frightened');
+    return anyFrightened
+        ? getPacmanFrightSpeed(gameState.level)
+        : getPacmanNormalSpeed(gameState.level);
+}
+
+// Tunnel zone: row 17, columns 0–5 (left) and 22–27 (right)
+const TUNNEL_ROW = 17;
+
+function isGhostInTunnel(ghost: IGameObject): boolean {
+    if (ghost.roundedY() !== TUNNEL_ROW) return false;
+    const col = ghost.roundedX();
+    return col <= 5 || col >= 22;
+}
+
+// Apply correct speed to all active ghosts based on their current mode and position
+function updateGhostTunnelSpeeds(): void {
+    if (gameState.frozen || gameState.gameOver) return;
+    for (const ghost of gameState.ghosts) {
+        // Modes managed outside this function
+        if (ghost.ghostMode === 'eyes' || ghost.ghostMode === 'house' ||
+            ghost.ghostMode === 'exiting') continue;
+
+        if (isGhostInTunnel(ghost)) {
+            ghost.moveSpeed = getGhostTunnelSpeed(gameState.level);
+        } else if (ghost.ghostMode === 'frightened') {
+            ghost.moveSpeed = getGhostFrightSpeed(gameState.level);
+        } else {
+            ghost.moveSpeed = getGhostNormalSpeed(gameState.level);
+        }
+    }
+}
 
 // Personal dot-counter limits per ghost color and level group (Phase 3)
 function getPersonalLimit(color: string, level: number): number {
@@ -119,7 +187,7 @@ function activateFrightened(): void {
             ghost.ghostMode !== 'exiting') {
             ghost.ghostMode = 'frightened';
             ghost.moveDir = oppositeDir(ghost.moveDir);
-            ghost.moveSpeed = SPEED_FRIGHTENED;
+            ghost.moveSpeed = getGhostFrightSpeed(gameState.level);
         }
     }
 }
@@ -133,8 +201,12 @@ function updateFrightenedMode(): void {
     for (const ghost of gameState.ghosts) {
         if (ghost.ghostMode === 'frightened') {
             ghost.ghostMode = globalMode;
-            ghost.moveSpeed = SPEED_NORMAL;
+            // Speed will be corrected by updateGhostTunnelSpeeds() this same frame
         }
+    }
+    // Restore Pac-Man speed if not currently paused for a dot
+    if (gameState.pacman.moveSpeed !== 0) {
+        gameState.pacman.moveSpeed = getPacmanNormalSpeed(gameState.level);
     }
 }
 
@@ -244,7 +316,7 @@ function makeGhostTileCentered(getGhost: () => IGameObject): (_x: number, _y: nu
         if (ghost.ghostMode === 'eyes' && ghost.roundedX() === 13 && ghost.roundedY() === 14) {
             ghost.x = 13 * unit + unit / 2; // exit column
             ghost.y = 17 * unit + unit / 2; // center of house interior
-            ghost.moveSpeed = SPEED_NORMAL;
+            ghost.moveSpeed = getGhostNormalSpeed(gameState.level);
             ghost.ghostMode = 'exiting';
             return;
         }
@@ -259,13 +331,13 @@ function resetPositions(afterDeath = false): void {
     const pm = gameState.pacman;
     const pmPos = tileToPixel(START.pacman.x, START.pacman.y);
     pm.x = pmPos.x; pm.y = pmPos.y;
-    pm.moveDir = 'left'; pm.moveSpeed = SPEED_NORMAL;
+    pm.moveDir = 'left'; pm.moveSpeed = getPacmanNormalSpeed(gameState.level);
 
     // Blinky always starts outside
     const bl = gameState.blinky;
     const blPos = tileToPixel(START.blinky.x, START.blinky.y);
     bl.x = blPos.x; bl.y = blPos.y;
-    bl.moveDir = 'left'; bl.moveSpeed = SPEED_NORMAL;
+    bl.moveDir = 'left'; bl.moveSpeed = getGhostNormalSpeed(gameState.level);
     bl.ghostMode = 'scatter';
 
     // House ghosts reset to their starting positions inside
@@ -278,7 +350,7 @@ function resetPositions(afterDeath = false): void {
         const pos = tileToPixel(start.x, start.y);
         ghost.x = pos.x; ghost.y = pos.y;
         ghost.moveDir = 'down'; // start bouncing downward
-        ghost.moveSpeed = SPEED_NORMAL;
+        ghost.moveSpeed = getGhostNormalSpeed(gameState.level);
         ghost.ghostMode = 'house';
     }
 
@@ -368,7 +440,7 @@ function pacmanOnTileChanged(x: number, y: number): void {
         Levels.levelDynamic[y][x] = 5;
         Stats.addToScore(10);
         gameState.pacman.moveSpeed = 0.0;
-        Time.addTimer(0.01666666667, () => { gameState.pacman.moveSpeed = 1.0; });
+        Time.addTimer(0.01666666667, () => { gameState.pacman.moveSpeed = getCurrentPacmanSpeed(); });
         incrementDotCounters();
         if (countRemainingDots() === 0) levelClear();
     }
@@ -378,7 +450,7 @@ function pacmanOnTileChanged(x: number, y: number): void {
         Levels.levelDynamic[y][x] = 5;
         Stats.addToScore(50);
         gameState.pacman.moveSpeed = 0.0;
-        Time.addTimer(0.05, () => { gameState.pacman.moveSpeed = 1.0; });
+        Time.addTimer(0.05, () => { gameState.pacman.moveSpeed = getCurrentPacmanSpeed(); });
         incrementDotCounters();
         activateFrightened();
         if (countRemainingDots() === 0) levelClear();
@@ -421,6 +493,7 @@ function update(): void {
         Input.update();
         updateScatterChaseMode(Time.deltaTime);
         updateFrightenedMode();
+        updateGhostTunnelSpeeds();
         updateIdleTimer(Time.deltaTime);
     }
 
