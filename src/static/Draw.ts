@@ -385,8 +385,8 @@ export class Draw {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = 'yellow';
-        // Row 26 is Pac-Man's starting row — show READY! there
-        ctx.fillText('READY!', gameState.canvas.width / 2, 26 * unit + unit / 2);
+        // Row 20 is the open corridor inside the ghost house enclosure
+        ctx.fillText('READY!', gameState.canvas.width / 2, 20 * unit + unit / 2);
     }
 
     static gameOverScreen(): void {
