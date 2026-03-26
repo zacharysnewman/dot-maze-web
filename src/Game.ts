@@ -24,6 +24,21 @@ const SPEED_NORMAL     = 1.0;
 const SPEED_FRIGHTENED = 0.5;
 const SPEED_EYES       = 1.5;
 
+// Personal dot-counter limits per ghost color and level group (Phase 3)
+function getPersonalLimit(color: string, level: number): number {
+    if (color === 'hotpink') return 0;
+    if (color === 'cyan')    return level === 1 ? 30 : 0;
+    if (color === 'orange')  return level === 1 ? 60 : level === 2 ? 50 : 0;
+    return 0;
+}
+
+// Global counter thresholds after a life is lost
+const GLOBAL_THRESHOLDS: Record<string, number> = {
+    'hotpink': 7,
+    'cyan':    17,
+    'orange':  32,
+};
+
 function tileToPixel(tileX: number, tileY: number): { x: number; y: number } {
     return { x: tileX * unit + unit / 2, y: tileY * unit + unit / 2 };
 }
@@ -44,7 +59,8 @@ function resetScatterChaseTimer(): void {
     gameState.scatterChaseIndex = 0;
     gameState.scatterChaseElapsed = 0;
     for (const ghost of gameState.ghosts) {
-        if (ghost.ghostMode !== 'frightened' && ghost.ghostMode !== 'eyes') {
+        if (ghost.ghostMode !== 'frightened' && ghost.ghostMode !== 'eyes' &&
+            ghost.ghostMode !== 'house' && ghost.ghostMode !== 'exiting') {
             ghost.ghostMode = 'scatter';
         }
     }
@@ -66,9 +82,13 @@ function updateScatterChaseMode(dt: number): void {
             gameState.scatterChaseIndex++;
         }
         const newMode = AI.getCurrentGlobalMode();
-        // Apply new mode and immediately reverse non-frightened, non-eyes ghosts
         for (const ghost of gameState.ghosts) {
-            if (ghost.ghostMode !== 'frightened' && ghost.ghostMode !== 'eyes') {
+            if (ghost.ghostMode === 'house') {
+                // Track mode change so exit direction flips to right
+                gameState.modeChangesInHouse[ghost.color] =
+                    (gameState.modeChangesInHouse[ghost.color] ?? 0) + 1;
+            } else if (ghost.ghostMode !== 'frightened' && ghost.ghostMode !== 'eyes' &&
+                       ghost.ghostMode !== 'exiting') {
                 ghost.ghostMode = newMode;
                 ghost.moveDir = oppositeDir(ghost.moveDir);
             }
@@ -85,7 +105,8 @@ function activateFrightened(): void {
     if (duration <= 0) {
         // Zero duration: reverse ghosts but don't turn them blue
         for (const ghost of gameState.ghosts) {
-            if (ghost.ghostMode !== 'eyes') {
+            if (ghost.ghostMode !== 'eyes' && ghost.ghostMode !== 'house' &&
+                ghost.ghostMode !== 'exiting') {
                 ghost.moveDir = oppositeDir(ghost.moveDir);
             }
         }
@@ -94,7 +115,8 @@ function activateFrightened(): void {
 
     gameState.frightenedEnd = Time.timeSinceStart + duration;
     for (const ghost of gameState.ghosts) {
-        if (ghost.ghostMode !== 'eyes') {
+        if (ghost.ghostMode !== 'eyes' && ghost.ghostMode !== 'house' &&
+            ghost.ghostMode !== 'exiting') {
             ghost.ghostMode = 'frightened';
             ghost.moveDir = oppositeDir(ghost.moveDir);
             ghost.moveSpeed = SPEED_FRIGHTENED;
@@ -139,15 +161,91 @@ function eatGhost(ghost: IGameObject): void {
     ghost.moveSpeed = SPEED_EYES;
 }
 
+// ── Ghost House Release (Phase 3) ─────────────────────────────────────────────
+
+function releaseGhost(ghost: IGameObject): void {
+    ghost.ghostMode = 'exiting';
+}
+
+function getNextHouseGhost(): IGameObject | null {
+    for (const ghost of [gameState.pinky, gameState.inky, gameState.clyde]) {
+        if (ghost.ghostMode === 'house') return ghost;
+    }
+    return null;
+}
+
+// Release all house ghosts whose personal counter has reached their limit (cascading)
+function checkAndReleaseHouseGhosts(): void {
+    if (gameState.useGlobalDotCounter) return; // global counter handles its own releases
+    for (const ghost of [gameState.pinky, gameState.inky, gameState.clyde]) {
+        if (ghost.ghostMode !== 'house') continue;
+        const limit = getPersonalLimit(ghost.color, gameState.level);
+        if (gameState.personalDotCounters[ghost.color] >= limit) {
+            releaseGhost(ghost);
+            // Don't break — next iteration picks up the newly-active ghost
+        } else {
+            break; // This ghost's counter is active and not yet at limit
+        }
+    }
+}
+
+function incrementDotCounters(): void {
+    // Reset idle timer every time a dot is eaten
+    gameState.idleTimer = 0;
+
+    if (gameState.useGlobalDotCounter) {
+        gameState.globalDotCounter++;
+        const gc = gameState.globalDotCounter;
+        if (gc >= GLOBAL_THRESHOLDS['hotpink'] && gameState.pinky.ghostMode === 'house') {
+            releaseGhost(gameState.pinky);
+        }
+        if (gc >= GLOBAL_THRESHOLDS['cyan'] && gameState.inky.ghostMode === 'house') {
+            releaseGhost(gameState.inky);
+        }
+        if (gc >= GLOBAL_THRESHOLDS['orange'] && gameState.clyde.ghostMode === 'house') {
+            releaseGhost(gameState.clyde);
+            gameState.useGlobalDotCounter = false; // deactivate (Clyde was inside at 32)
+        }
+        // If Clyde was already outside at 32, the counter keeps running (stuck-ghost exploit)
+    } else {
+        // Increment only the active ghost's personal counter (first one still in house)
+        for (const ghost of [gameState.pinky, gameState.inky, gameState.clyde]) {
+            if (ghost.ghostMode === 'house') {
+                gameState.personalDotCounters[ghost.color]++;
+                break;
+            }
+        }
+        checkAndReleaseHouseGhosts();
+    }
+}
+
+function updateIdleTimer(dt: number): void {
+    const hasHouseGhost = [gameState.pinky, gameState.inky, gameState.clyde]
+        .some(g => g.ghostMode === 'house');
+    if (!hasHouseGhost) { gameState.idleTimer = 0; return; }
+
+    gameState.idleTimer += dt;
+    const limit = gameState.level >= 5 ? 3 : 4;
+    if (gameState.idleTimer >= limit) {
+        gameState.idleTimer = 0;
+        const ghost = getNextHouseGhost();
+        if (ghost) releaseGhost(ghost);
+    }
+}
+
 // ── Game Object Callbacks ─────────────────────────────────────────────────────
 
 function makeGhostTileCentered(getGhost: () => IGameObject): (_x: number, _y: number) => void {
     return (_x: number, _y: number) => {
         const ghost = getGhost();
-        // Eyes arrive at ghost house entrance — revive
+        // Skip AI for ghosts managed by the house system
+        if (ghost.ghostMode === 'house' || ghost.ghostMode === 'exiting') return;
+        // Eyes arrive at ghost house entrance — snap inside and begin exiting
         if (ghost.ghostMode === 'eyes' && ghost.roundedX() === 13 && ghost.roundedY() === 14) {
-            ghost.ghostMode = AI.getCurrentGlobalMode();
+            ghost.x = 13 * unit + unit / 2; // exit column
+            ghost.y = 17 * unit + unit / 2; // center of house interior
             ghost.moveSpeed = SPEED_NORMAL;
+            ghost.ghostMode = 'exiting';
             return;
         }
         AI.ghostTileCenter(ghost);
@@ -156,31 +254,54 @@ function makeGhostTileCentered(getGhost: () => IGameObject): (_x: number, _y: nu
 
 // ── Positions & Reset ─────────────────────────────────────────────────────────
 
-function resetPositions(): void {
-    const actors: Array<{ key: keyof typeof START; dir: Direction }> = [
-        { key: 'pacman', dir: 'left' },
-        { key: 'blinky', dir: 'left' },
-        { key: 'inky',   dir: 'left' },
-        { key: 'pinky',  dir: 'left' },
-        { key: 'clyde',  dir: 'left' },
+function resetPositions(afterDeath = false): void {
+    // Pac-Man
+    const pm = gameState.pacman;
+    const pmPos = tileToPixel(START.pacman.x, START.pacman.y);
+    pm.x = pmPos.x; pm.y = pmPos.y;
+    pm.moveDir = 'left'; pm.moveSpeed = SPEED_NORMAL;
+
+    // Blinky always starts outside
+    const bl = gameState.blinky;
+    const blPos = tileToPixel(START.blinky.x, START.blinky.y);
+    bl.x = blPos.x; bl.y = blPos.y;
+    bl.moveDir = 'left'; bl.moveSpeed = SPEED_NORMAL;
+    bl.ghostMode = 'scatter';
+
+    // House ghosts reset to their starting positions inside
+    const houseActors: Array<{ ghost: IGameObject; start: { x: number; y: number } }> = [
+        { ghost: gameState.pinky, start: START.pinky },
+        { ghost: gameState.inky,  start: START.inky  },
+        { ghost: gameState.clyde, start: START.clyde  },
     ];
-    for (const { key, dir } of actors) {
-        const obj = gameState[key];
-        const pos = tileToPixel(START[key].x, START[key].y);
-        obj.x = pos.x;
-        obj.y = pos.y;
-        obj.moveDir = dir;
-        obj.moveSpeed = SPEED_NORMAL;
-        if (key !== 'pacman') {
-            obj.ghostMode = 'scatter';
-        }
+    for (const { ghost, start } of houseActors) {
+        const pos = tileToPixel(start.x, start.y);
+        ghost.x = pos.x; ghost.y = pos.y;
+        ghost.moveDir = 'down'; // start bouncing downward
+        ghost.moveSpeed = SPEED_NORMAL;
+        ghost.ghostMode = 'house';
     }
+
+    // Ghost house release state
+    gameState.useGlobalDotCounter = afterDeath;
+    gameState.globalDotCounter = 0;
+    if (!afterDeath) {
+        // Level start: reset personal counters
+        gameState.personalDotCounters = { 'hotpink': 0, 'cyan': 0, 'orange': 0 };
+    }
+    // Always reset mode-change tracking and idle timer
+    gameState.modeChangesInHouse = { 'hotpink': 0, 'cyan': 0, 'orange': 0 };
+    gameState.idleTimer = 0;
+
     gameState.frightenedEnd = 0;
     gameState.ghostEatenChain = 0;
     gameState.scorePopups = [];
     gameState.pacmanFrozen = false;
     resetScatterChaseTimer();
     AI.resetPrng();
+
+    // Immediately release any ghost whose counter is already at its limit (e.g. Pinky=0)
+    checkAndReleaseHouseGhosts();
 }
 
 function countRemainingDots(): number {
@@ -198,7 +319,7 @@ function levelClear(): void {
     Time.addTimer(1.5, () => {
         gameState.level++;
         Levels.levelDynamic = Levels.level1.map(row => [...row]);
-        resetPositions();
+        resetPositions(false);
         gameState.frozen = false;
     });
 }
@@ -214,7 +335,7 @@ function loseLife(): void {
     }
 
     Time.addTimer(1.0, () => {
-        resetPositions();
+        resetPositions(true); // afterDeath=true → enable global dot counter
         gameState.frozen = false;
     });
 }
@@ -228,7 +349,8 @@ function checkCollisions(): void {
         if (ghost.roundedX() === px && ghost.roundedY() === py) {
             if (ghost.ghostMode === 'frightened') {
                 eatGhost(ghost);
-            } else if (ghost.ghostMode !== 'eyes') {
+            } else if (ghost.ghostMode !== 'eyes' && ghost.ghostMode !== 'house' &&
+                       ghost.ghostMode !== 'exiting') {
                 loseLife();
                 return;
             }
@@ -247,6 +369,7 @@ function pacmanOnTileChanged(x: number, y: number): void {
         Stats.addToScore(10);
         gameState.pacman.moveSpeed = 0.0;
         Time.addTimer(0.01666666667, () => { gameState.pacman.moveSpeed = 1.0; });
+        incrementDotCounters();
         if (countRemainingDots() === 0) levelClear();
     }
 
@@ -256,6 +379,7 @@ function pacmanOnTileChanged(x: number, y: number): void {
         Stats.addToScore(50);
         gameState.pacman.moveSpeed = 0.0;
         Time.addTimer(0.05, () => { gameState.pacman.moveSpeed = 1.0; });
+        incrementDotCounters();
         activateFrightened();
         if (countRemainingDots() === 0) levelClear();
     }
@@ -271,6 +395,10 @@ function initializeLevel(): void {
     Levels.levelSetup   = Levels.level1;
     Levels.levelDynamic = Levels.level1.map(row => [...row]);
 
+    // Pre-initialize personal counters so resetPositions can reference them
+    gameState.personalDotCounters = { 'hotpink': 0, 'cyan': 0, 'orange': 0 };
+    gameState.modeChangesInHouse  = { 'hotpink': 0, 'cyan': 0, 'orange': 0 };
+
     gameState.pacman = new GameObject('yellow',  START.pacman.x, START.pacman.y, 0.667, Move.pacman, Draw.pacman, pacmanOnTileChanged, pacmanOnTileCentered);
     gameState.blinky = new GameObject('red',     START.blinky.x, START.blinky.y, 0.667, Move.blinky, Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.blinky));
     gameState.inky   = new GameObject('cyan',    START.inky.x,   START.inky.y,   0.667, Move.inky,   Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.inky));
@@ -280,10 +408,8 @@ function initializeLevel(): void {
     gameState.gameObjects = [gameState.pacman, gameState.blinky, gameState.inky, gameState.pinky, gameState.clyde];
     gameState.ghosts      = [gameState.blinky, gameState.inky, gameState.pinky, gameState.clyde];
 
-    // All ghosts start in scatter mode
-    for (const ghost of gameState.ghosts) {
-        ghost.ghostMode = 'scatter';
-    }
+    // resetPositions sets all positions, modes, and triggers initial house releases
+    resetPositions(false);
 }
 
 // ── Main Update Loop ──────────────────────────────────────────────────────────
@@ -295,6 +421,7 @@ function update(): void {
         Input.update();
         updateScatterChaseMode(Time.deltaTime);
         updateFrightenedMode();
+        updateIdleTimer(Time.deltaTime);
     }
 
     Draw.level();

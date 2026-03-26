@@ -60,6 +60,7 @@ export class AI {
         if (gameState.frozen) return;
 
         const mode = obj.ghostMode ?? AI.getCurrentGlobalMode();
+        if (mode === 'house' || mode === 'exiting') return;
 
         if (mode === 'frightened') {
             AI.ghostFrightenedMove(obj);

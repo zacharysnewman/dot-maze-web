@@ -21,4 +21,10 @@ export const gameState = {
     frightenedEnd: 0,
     ghostEatenChain: 0,
     scorePopups: [] as Array<{ x: number; y: number; score: number; endTime: number }>,
+    // Ghost house state (Phase 3)
+    useGlobalDotCounter: false,
+    globalDotCounter: 0,
+    personalDotCounters: {} as Record<string, number>,
+    modeChangesInHouse: {} as Record<string, number>,
+    idleTimer: 0,
 };

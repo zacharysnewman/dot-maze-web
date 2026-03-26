@@ -2,7 +2,7 @@ export type Direction = 'left' | 'right' | 'up' | 'down';
 
 export type TileValue = 0 | 2 | 3 | 4 | 5;
 
-export type GhostMode = 'scatter' | 'chase' | 'frightened' | 'eyes';
+export type GhostMode = 'scatter' | 'chase' | 'frightened' | 'eyes' | 'house' | 'exiting';
 
 export interface IGameObject {
     color: string;

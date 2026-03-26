@@ -107,17 +107,17 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | Feature | Status | Notes / File |
 |---|---|---|
 | Ghost house rendered (pink door) | ✅ | `Draw.cageGate()` |
-| Ghosts locked inside house at start | ❌ | Ghosts move freely from frame 1 |
-| Personal dot counter system | ❌ | |
-| L1: Inky limit 30, Clyde limit 60 | ❌ | |
-| L2: Clyde limit 50 | ❌ | |
-| L3+: all exit immediately | ❌ | |
-| Global dot counter after life lost | ❌ | |
-| Idle timer (4 s / 3 s) | ❌ | |
-| In-house bouncing animation | ❌ | |
-| Ghost exit direction (left vs right) | ❌ | |
-| Ghost eyes returning home | ✅ | Eyes mode targets (13,14); `makeGhostTileCentered()` revives on arrival |
-| Ghost revived in house | ⚠️ | Revived at (13,14) outside house (Phase 3 not yet implemented) |
+| Ghosts locked inside house at start | ✅ | Pinky/Inky/Clyde start in `'house'` mode; Blinky starts outside |
+| Personal dot counter system | ✅ | `incrementDotCounters()` in `Game.ts` — only active ghost's counter incremented |
+| L1: Inky limit 30, Clyde limit 60 | ✅ | `getPersonalLimit()` in `Game.ts` |
+| L2: Clyde limit 50 | ✅ | `getPersonalLimit()` in `Game.ts` |
+| L3+: all exit immediately | ✅ | All limits 0 → released on level init |
+| Global dot counter after life lost | ✅ | `resetPositions(afterDeath=true)` enables global counter; thresholds 7/17/32 |
+| Idle timer (4 s / 3 s) | ✅ | `updateIdleTimer()` in `Game.ts` — resets on dot eaten |
+| In-house bouncing animation | ✅ | `Move.ghostBounce()` — bounces between tile rows 16–18 |
+| Ghost exit direction (left vs right) | ✅ | Left by default; right if mode changed while inside (`modeChangesInHouse`) |
+| Ghost eyes returning home | ✅ | Eyes navigate to (13,14); ghost snaps inside house and begins exiting |
+| Ghost revived in house | ✅ | Revived at center of house (13,17), mode set to `'exiting'` |
 
 ---
 
@@ -203,13 +203,13 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 | Ghosts (shared) | 10 | 16 | 63% |
 | Ghost AI — modes | 7 | 7 | 100% |
 | Ghost AI — targeting | 4 | 8 | 50% |
-| Ghost house & release | 3 | 12 | 25% |
+| Ghost house & release | 12 | 12 | 100% |
 | Cruise Elroy | 0 | 6 | 0% |
 | Frightened mode | 11 | 12 | 92% |
 | Lives & game flow | 8 | 10 | 80% |
 | HUD & display | 6 | 9 | 67% |
 | Audio | 0 | 1 | 0% |
-| **Overall** | **68** | **103** | **~66%** |
+| **Overall** | **77** | **103** | **~75%** |
 
 ---
 
@@ -219,7 +219,7 @@ Consolidated view of what is and is not yet implemented in `Pacman.js`, measured
 |---|---|---|
 | Phase 1 — Playable Game Loop | ✅ Complete | All ghosts move, collision, HUD, lives, level clear |
 | Phase 2 — Scatter/Chase Mode Switching | ✅ Complete | Timer, corner targeting, reversal, reset |
-| Phase 3 — Ghost House & Release | ❌ Not started | |
+| Phase 3 — Ghost House & Release | ✅ Complete | House lock, personal counters, global counter, idle timer, bounce, exit direction |
 | Phase 4 — Frightened Mode | ✅ Complete | Energizer trigger, blue visuals, flash, PRNG, eating, eyes, score chain; mobile continuous swipe added |
 | Phase 5 — Authentic Ghost AI | ❌ Not started | |
 | Phase 6 — Speed System | ❌ Not started | |
