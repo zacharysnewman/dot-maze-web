@@ -438,6 +438,53 @@ export class Draw {
         if (gameState.debugShowTargetTiles)  Draw.debugTargetTiles(ctx);
         if (gameState.debugShowTargetingViz) Draw.debugTargetingViz(ctx);
         if (gameState.debugShowModes)        Draw.debugModes(ctx);
+        if (gameState.debugTilePicker)       Draw.debugTilePickerOverlay(ctx);
+    }
+
+    private static debugTilePickerOverlay(ctx: CanvasRenderingContext2D): void {
+        const t = gameState.debugSelectedTile;
+        if (!t) return;
+
+        const TILE_NAMES: Record<number, string> = { 0: 'wall', 2: 'door', 3: 'dot', 4: 'energizer', 5: 'empty' };
+        const raw = Levels.levelDynamic[t.y]?.[t.x];
+        const tileName = raw !== undefined ? (TILE_NAMES[raw] ?? String(raw)) : 'oob';
+        const label = `(${t.x}, ${t.y})  ${tileName}`;
+
+        // Highlight selected tile
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = 'white';
+        ctx.fillRect(t.x * unit, t.y * unit, unit, unit);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(t.x * unit + 1, t.y * unit + 1, unit - 2, unit - 2);
+        ctx.restore();
+
+        // Coordinate label — positioned above the tile, flipped below if too close to top
+        const labelPadX = 6, labelPadY = 4;
+        ctx.font = 'bold 13px monospace';
+        const tw = ctx.measureText(label).width;
+        const boxW = tw + labelPadX * 2;
+        const boxH = 13 + labelPadY * 2;
+        let bx = t.x * unit + unit / 2 - boxW / 2;
+        let by = t.y * unit - boxH - 4;
+        // clamp horizontally
+        bx = Math.max(2, Math.min(gameState.canvas.width - boxW - 2, bx));
+        // flip below tile if too close to top
+        if (by < 2) by = t.y * unit + unit + 4;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.82)';
+        ctx.fillRect(bx, by, boxW, boxH);
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx, by, boxW, boxH);
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(label, bx + labelPadX, by + labelPadY);
+        ctx.restore();
     }
 
     private static debugRedZones(ctx: CanvasRenderingContext2D): void {

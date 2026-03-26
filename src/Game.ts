@@ -820,6 +820,7 @@ window.onload = function () {
             <label><input type="checkbox" id="dbg-viz"> Targeting viz</label>
             <label><input type="checkbox" id="dbg-modes"> Ghost modes</label>
             <label><input type="checkbox" id="dbg-redzones"> Red zones</label>
+            <label><input type="checkbox" id="dbg-tilepicker"> Tile picker</label>
             <button id="dbg-pause">⏸ Pause</button>
         `;
         document.body.appendChild(panel);
@@ -841,11 +842,32 @@ window.onload = function () {
         (document.getElementById('dbg-redzones') as HTMLInputElement).onchange = (e) => {
             gameState.debugShowRedZones = (e.target as HTMLInputElement).checked;
         };
+        (document.getElementById('dbg-tilepicker') as HTMLInputElement).onchange = (e) => {
+            gameState.debugTilePicker = (e.target as HTMLInputElement).checked;
+            if (!gameState.debugTilePicker) gameState.debugSelectedTile = null;
+        };
         const pauseBtn = document.getElementById('dbg-pause') as HTMLButtonElement;
         pauseBtn.onclick = () => {
             gameState.frozen = !gameState.frozen;
             pauseBtn.textContent = gameState.frozen ? '▶ Resume' : '⏸ Pause';
         };
+
+        // Canvas tile picker — converts click/tap position to tile coordinates
+        function pickTile(clientX: number, clientY: number): void {
+            if (!gameState.debugTilePicker) return;
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width  / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const tx = Math.floor((clientX - rect.left) * scaleX / unit);
+            const ty = Math.floor((clientY - rect.top)  * scaleY / unit);
+            gameState.debugSelectedTile = { x: tx, y: ty };
+        }
+        canvas.addEventListener('click', (e) => pickTile(e.clientX, e.clientY));
+        canvas.addEventListener('touchend', (e) => {
+            if (!gameState.debugTilePicker) return;
+            const t = e.changedTouches[0];
+            pickTile(t.clientX, t.clientY);
+        }, { passive: true });
     }
 
     function launchGame(): void {
