@@ -316,7 +316,7 @@ function makeGhostTileCentered(getGhost: () => IGameObject): (_x: number, _y: nu
         if (ghost.ghostMode === 'eyes' && ghost.roundedX() === 13 && ghost.roundedY() === 14) {
             ghost.x = 13 * unit + unit / 2; // exit column
             ghost.y = 17 * unit + unit / 2; // center of house interior
-            ghost.moveSpeed = getGhostNormalSpeed(gameState.level);
+            ghost.moveSpeed = 1.0;  // exit animation uses fixed speed
             ghost.ghostMode = 'exiting';
             return;
         }
@@ -350,7 +350,7 @@ function resetPositions(afterDeath = false): void {
         const pos = tileToPixel(start.x, start.y);
         ghost.x = pos.x; ghost.y = pos.y;
         ghost.moveDir = 'down'; // start bouncing downward
-        ghost.moveSpeed = getGhostNormalSpeed(gameState.level);
+        ghost.moveSpeed = 1.0;  // bounce/exit uses fixed speed; maze speed applied on release
         ghost.ghostMode = 'house';
     }
 
