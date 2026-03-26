@@ -666,6 +666,7 @@ function update(): void {
     }
 
     Draw.scorePopups();
+    Draw.debug();
     Draw.readyText();
 
     if (!gameState.frozen && !gameState.gameOver) {
@@ -776,6 +777,62 @@ window.onload = function () {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
     setupTouchControls();
+
+    if (new URLSearchParams(window.location.search).get('dev') === 'true') {
+        gameState.debugEnabled = true;
+        const panel = document.createElement('div');
+        panel.id = 'debug-panel';
+        panel.innerHTML = `
+            <style>
+            #debug-panel {
+                position: fixed; top: 10px; right: 10px;
+                background: rgba(0,0,0,0.88); color: #eee;
+                padding: 10px 14px; border: 1px solid #555;
+                font-family: monospace; font-size: 13px;
+                border-radius: 6px; z-index: 9999;
+                user-select: none; min-width: 160px;
+            }
+            #debug-panel h3 {
+                margin: 0 0 8px; color: yellow;
+                font-size: 13px; letter-spacing: 1px;
+            }
+            #debug-panel label {
+                display: flex; align-items: center;
+                gap: 7px; cursor: pointer; margin: 5px 0;
+            }
+            #debug-panel input[type=checkbox] { cursor: pointer; }
+            #debug-panel button {
+                margin-top: 8px; width: 100%;
+                background: #333; color: #eee;
+                border: 1px solid #666; border-radius: 4px;
+                font-family: monospace; font-size: 13px;
+                padding: 4px 0; cursor: pointer;
+            }
+            #debug-panel button:hover { background: #444; }
+            </style>
+            <h3>⚙ DEBUG</h3>
+            <label><input type="checkbox" id="dbg-targets"> Target tiles</label>
+            <label><input type="checkbox" id="dbg-viz"> Targeting viz</label>
+            <label><input type="checkbox" id="dbg-modes"> Ghost modes</label>
+            <button id="dbg-pause">⏸ Pause</button>
+        `;
+        document.body.appendChild(panel);
+
+        (document.getElementById('dbg-targets') as HTMLInputElement).onchange = (e) => {
+            gameState.debugShowTargetTiles = (e.target as HTMLInputElement).checked;
+        };
+        (document.getElementById('dbg-viz') as HTMLInputElement).onchange = (e) => {
+            gameState.debugShowTargetingViz = (e.target as HTMLInputElement).checked;
+        };
+        (document.getElementById('dbg-modes') as HTMLInputElement).onchange = (e) => {
+            gameState.debugShowModes = (e.target as HTMLInputElement).checked;
+        };
+        const pauseBtn = document.getElementById('dbg-pause') as HTMLButtonElement;
+        pauseBtn.onclick = () => {
+            gameState.frozen = !gameState.frozen;
+            pauseBtn.textContent = gameState.frozen ? '▶ Resume' : '⏸ Pause';
+        };
+    }
 
     function launchGame(): void {
         if (gameStarted) return;

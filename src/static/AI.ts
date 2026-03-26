@@ -97,15 +97,18 @@ export class AI {
                 const ahead = AI.tilesAheadOfPacman(4);
                 targetX = ahead.x;
                 targetY = ahead.y;
+                if (gameState.debugEnabled) gameState.debugPinkyAhead = ahead;
             } else if (obj.color === 'cyan') {
                 // Inky: doubled vector from Blinky through 2 tiles ahead of Pac-Man
                 const intermediate = AI.tilesAheadOfPacman(2);
                 const blinky = gameState.blinky;
                 targetX = 2 * intermediate.x - blinky.roundedX();
                 targetY = 2 * intermediate.y - blinky.roundedY();
+                if (gameState.debugEnabled) gameState.debugInkyPivot = intermediate;
             } else if (obj.color === 'orange') {
                 // Clyde: target Pac-Man if ≥8 tiles away, else retreat to scatter corner
                 const dist = getDistance(obj.roundedX(), obj.roundedY(), pacman.roundedX(), pacman.roundedY());
+                if (gameState.debugEnabled) gameState.debugClydeDistToPacman = dist;
                 if (dist >= 8) {
                     targetX = pacman.roundedX();
                     targetY = pacman.roundedY();
@@ -119,6 +122,8 @@ export class AI {
                 targetY = pacman.roundedY();
             }
         }
+
+        if (gameState.debugEnabled) gameState.debugGhostTargets[obj.color] = { x: targetX, y: targetY };
 
         // Treat undefined (off-grid) as passable on the tunnel row so ghosts can wrap
         const TUNNEL_ROW = 17;

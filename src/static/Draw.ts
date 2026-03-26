@@ -428,4 +428,177 @@ export class Draw {
         Draw.dots();
         Draw.fruit();
     }
+
+    // ── Debug Overlay ─────────────────────────────────────────────────────────
+
+    static debug(): void {
+        if (!gameState.debugEnabled) return;
+        const ctx = gameState.ctx;
+        if (gameState.debugShowTargetTiles)  Draw.debugTargetTiles(ctx);
+        if (gameState.debugShowTargetingViz) Draw.debugTargetingViz(ctx);
+        if (gameState.debugShowModes)        Draw.debugModes(ctx);
+    }
+
+    private static debugArrow(
+        ctx: CanvasRenderingContext2D,
+        x1: number, y1: number,
+        x2: number, y2: number,
+        color: string,
+        alpha = 0.9,
+    ): void {
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 4) return;
+        const headLen = Math.min(14, len * 0.28);
+        const angle = Math.atan2(dy, dx);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    private static debugTargetTiles(ctx: CanvasRenderingContext2D): void {
+        for (const ghost of gameState.ghosts) {
+            const t = gameState.debugGhostTargets[ghost.color];
+            if (!t) continue;
+            ctx.save();
+            ctx.globalAlpha = 0.35;
+            ctx.fillStyle = ghost.color;
+            ctx.fillRect(t.x * unit, t.y * unit, unit, unit);
+            ctx.globalAlpha = 0.9;
+            ctx.strokeStyle = ghost.color;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(t.x * unit + 1, t.y * unit + 1, unit - 2, unit - 2);
+            ctx.restore();
+        }
+    }
+
+    private static debugTargetingViz(ctx: CanvasRenderingContext2D): void {
+        const tc = (tx: number, ty: number) => ({ x: tx * unit + unit / 2, y: ty * unit + unit / 2 });
+
+        for (const ghost of gameState.ghosts) {
+            const mode = ghost.ghostMode;
+            if (!mode || mode === 'house' || mode === 'exiting' || mode === 'frightened') continue;
+
+            const t = gameState.debugGhostTargets[ghost.color];
+            if (!t) continue;
+            const tp = tc(t.x, t.y);
+
+            if (ghost.color === 'cyan' && mode === 'chase') {
+                // Inky: dashed line Blinky→pivot, solid arrow pivot→target
+                const pivot = gameState.debugInkyPivot;
+                if (pivot) {
+                    const pp = tc(pivot.x, pivot.y);
+                    const bl = gameState.blinky;
+                    ctx.save();
+                    ctx.globalAlpha = 0.55;
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([5, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(bl.x, bl.y);
+                    ctx.lineTo(pp.x, pp.y);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.restore();
+                    // pivot marker
+                    ctx.save();
+                    ctx.globalAlpha = 0.9;
+                    ctx.fillStyle = 'white';
+                    ctx.beginPath();
+                    ctx.arc(pp.x, pp.y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                    // doubled vector: pivot → target
+                    Draw.debugArrow(ctx, pp.x, pp.y, tp.x, tp.y, ghost.color);
+                }
+            } else if (ghost.color === 'orange' && mode === 'chase') {
+                // Clyde: 8-tile radius circle + arrow to target
+                const radiusPx = 8 * unit;
+                ctx.save();
+                ctx.globalAlpha = 0.4;
+                ctx.strokeStyle = ghost.color;
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([5, 4]);
+                ctx.beginPath();
+                ctx.arc(ghost.x, ghost.y, radiusPx, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.restore();
+                Draw.debugArrow(ctx, ghost.x, ghost.y, tp.x, tp.y, ghost.color);
+            } else if (ghost.color === 'hotpink' && mode === 'chase') {
+                // Pinky: dashed arrow Pac-Man→4-ahead, then arrow 4-ahead→target
+                const ahead = gameState.debugPinkyAhead;
+                if (ahead) {
+                    const ap = tc(ahead.x, ahead.y);
+                    const pm = gameState.pacman;
+                    ctx.save();
+                    ctx.globalAlpha = 0.5;
+                    ctx.strokeStyle = ghost.color;
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(pm.x, pm.y);
+                    ctx.lineTo(ap.x, ap.y);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.restore();
+                }
+                Draw.debugArrow(ctx, ghost.x, ghost.y, tp.x, tp.y, ghost.color);
+            } else {
+                // Blinky (chase/scatter) and eyes: simple arrow ghost→target
+                Draw.debugArrow(ctx, ghost.x, ghost.y, tp.x, tp.y, ghost.color);
+            }
+        }
+    }
+
+    private static debugModes(ctx: CanvasRenderingContext2D): void {
+        const modeLabel: Record<string, string> = {
+            scatter: 'SCATTER', chase: 'CHASE', frightened: 'FLEE',
+            eyes: 'EYES', house: 'HOUSE', exiting: 'EXIT',
+        };
+        const globalMode = `GLOBAL: ${(gameState.scatterChaseIndex < 8
+            ? ['scatter','chase','scatter','chase','scatter','chase','scatter','chase'][gameState.scatterChaseIndex]
+            : 'chase').toUpperCase()}`;
+
+        // Global mode badge — top-center below HUD
+        ctx.save();
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const gw = ctx.measureText(globalMode).width + 8;
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(gameState.canvas.width / 2 - gw / 2, 42, gw, 14);
+        ctx.fillStyle = 'white';
+        ctx.fillText(globalMode, gameState.canvas.width / 2, 44);
+        ctx.restore();
+
+        // Per-ghost mode badges above each ghost
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        for (const ghost of gameState.ghosts) {
+            const label = modeLabel[ghost.ghostMode ?? ''] ?? (ghost.ghostMode ?? '');
+            const badgeY = ghost.y - ghost.scale * unit * 0.75;
+            ctx.save();
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(0,0,0,0.75)';
+            ctx.fillRect(ghost.x - tw / 2 - 3, badgeY - 11, tw + 6, 11);
+            ctx.fillStyle = ghost.color;
+            ctx.fillText(label, ghost.x, badgeY);
+            ctx.restore();
+        }
+    }
 }

@@ -38,4 +38,13 @@ export const gameState = {
     elroySuspended: false,          // true after Pac-Man death; clears when Clyde exits house
     // Ready state (Phase 10)
     showReady: false,
+    // Debug overlay (enabled via ?dev=true)
+    debugEnabled: false,
+    debugShowTargetTiles: false,
+    debugShowTargetingViz: false,
+    debugShowModes: false,
+    debugGhostTargets: {} as Record<string, { x: number; y: number } | null>,
+    debugInkyPivot: null as { x: number; y: number } | null,
+    debugPinkyAhead: null as { x: number; y: number } | null,
+    debugClydeDistToPacman: 0,
 };
