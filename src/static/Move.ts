@@ -59,7 +59,7 @@ export class Move {
     // Bounce ghost up and down inside the ghost house
     static ghostBounce(ghost: IGameObject): void {
         const bounceTopY    = 16 * unit + unit / 2; // tile row 16 center
-        const bounceBottomY = 18 * unit + unit / 2; // tile row 18 center
+        const bounceBottomY = 17 * unit + unit / 2; // tile row 17 center
         const step = 2 * ghost.moveSpeed * Time.scaledDeltaTime * Draw.normalizedUnit();
 
         if (ghost.moveDir === 'up') {
