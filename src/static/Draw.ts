@@ -610,6 +610,12 @@ export class Draw {
     }
 
     private static debugGhostPaths(ctx: CanvasRenderingContext2D): void {
+        // Lane index per ghost — gives each a unique perpendicular offset
+        const LANE: Record<string, number> = { red: 0, hotpink: 1, cyan: 2, orange: 3 };
+        const LANE_WIDTH = 3.5; // px between lanes
+        // Offsets centred around 0: -1.5, -0.5, +0.5, +1.5
+        const laneOffset = (color: string) => (LANE[color] ?? 0) * LANE_WIDTH - LANE_WIDTH * 1.5;
+
         for (const ghost of gameState.ghosts) {
             const mode = ghost.ghostMode;
             if (!mode || mode === 'house' || mode === 'exiting' || mode === 'frightened') continue;
@@ -621,27 +627,66 @@ export class Draw {
             const path = Draw.bfsPath(gx, gy, t.x, t.y, allowDoor);
             if (path.length < 2) continue;
 
+            const off = laneOffset(ghost.color);
+
             ctx.save();
-            ctx.globalAlpha = 0.75;
+            ctx.globalAlpha = 0.85;
             ctx.strokeStyle = ghost.color;
+            ctx.fillStyle = ghost.color;
             ctx.lineWidth = 2;
             ctx.setLineDash([4, 3]);
 
             for (let i = 0; i < path.length - 1; i++) {
-                const ax = path[i].x * unit + unit / 2,     ay = path[i].y * unit + unit / 2;
-                const bx = path[i+1].x * unit + unit / 2,   by = path[i+1].y * unit + unit / 2;
-                // Segment line
+                const cx1 = path[i].x * unit + unit / 2,   cy1 = path[i].y * unit + unit / 2;
+                const cx2 = path[i+1].x * unit + unit / 2, cy2 = path[i+1].y * unit + unit / 2;
+
+                // Perpendicular to this segment
+                const dx = cx2 - cx1, dy = cy2 - cy1;
+                const len = Math.sqrt(dx * dx + dy * dy) || 1;
+                const px = -dy / len * off, py = dx / len * off;
+
+                const ax = cx1 + px, ay = cy1 + py;
+                const bx = cx2 + px, by = cy2 + py;
+
                 ctx.beginPath();
                 ctx.moveTo(ax, ay);
                 ctx.lineTo(bx, by);
                 ctx.stroke();
-                // Arrowhead on each segment
+
+                // Small arrowhead at end of each segment
                 ctx.setLineDash([]);
-                Draw.debugArrow(ctx, ax, ay, bx, by, ghost.color, 0.75);
+                Draw.arrowhead(ctx, ax, ay, bx, by, 6);
                 ctx.setLineDash([4, 3]);
             }
+
+            // Large arrowhead at the final point of the path
+            const last = path[path.length - 1];
+            const prev = path[path.length - 2];
+            const ex1 = prev.x * unit + unit / 2, ey1 = prev.y * unit + unit / 2;
+            const ex2 = last.x * unit + unit / 2, ey2 = last.y * unit + unit / 2;
+            const edx = ex2 - ex1, edy = ey2 - ey1;
+            const elen = Math.sqrt(edx * edx + edy * edy) || 1;
+            const epx = -edy / elen * off, epy = edx / elen * off;
+            ctx.setLineDash([]);
+            Draw.arrowhead(ctx, ex1 + epx, ey1 + epy, ex2 + epx, ey2 + epy, 10);
+
             ctx.restore();
         }
+    }
+
+    private static arrowhead(
+        ctx: CanvasRenderingContext2D,
+        x1: number, y1: number,
+        x2: number, y2: number,
+        headLen: number,
+    ): void {
+        const angle = Math.atan2(y2 - y1, x2 - x1);
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
     }
 
     private static debugTargetTiles(ctx: CanvasRenderingContext2D): void {
