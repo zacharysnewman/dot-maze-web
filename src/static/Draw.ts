@@ -655,14 +655,7 @@ export class Draw {
 
                 // Small arrowhead at end of each segment
                 ctx.setLineDash([]);
-                const angle = Math.atan2(by - ay, bx - ax);
-                const hl = 6;
-                ctx.beginPath();
-                ctx.moveTo(bx, by);
-                ctx.lineTo(bx - hl * Math.cos(angle - Math.PI / 6), by - hl * Math.sin(angle - Math.PI / 6));
-                ctx.lineTo(bx - hl * Math.cos(angle + Math.PI / 6), by - hl * Math.sin(angle + Math.PI / 6));
-                ctx.closePath();
-                ctx.fill();
+                Draw.arrowhead(ctx, ax, ay, bx, by, 6);
                 ctx.setLineDash([4, 3]);
             }
 
@@ -674,19 +667,26 @@ export class Draw {
             const edx = ex2 - ex1, edy = ey2 - ey1;
             const elen = Math.sqrt(edx * edx + edy * edy) || 1;
             const epx = -edy / elen * off, epy = edx / elen * off;
-            const endX = ex2 + epx, endY = ey2 + epy;
-            const endAngle = Math.atan2(edy, edx);
-            const ehl = 10;
             ctx.setLineDash([]);
-            ctx.beginPath();
-            ctx.moveTo(endX, endY);
-            ctx.lineTo(endX - ehl * Math.cos(endAngle - Math.PI / 6), endY - ehl * Math.sin(endAngle - Math.PI / 6));
-            ctx.lineTo(endX - ehl * Math.cos(endAngle + Math.PI / 6), endY - ehl * Math.sin(endAngle + Math.PI / 6));
-            ctx.closePath();
-            ctx.fill();
+            Draw.arrowhead(ctx, ex1 + epx, ey1 + epy, ex2 + epx, ey2 + epy, 10);
 
             ctx.restore();
         }
+    }
+
+    private static arrowhead(
+        ctx: CanvasRenderingContext2D,
+        x1: number, y1: number,
+        x2: number, y2: number,
+        headLen: number,
+    ): void {
+        const angle = Math.atan2(y2 - y1, x2 - x1);
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
     }
 
     private static debugTargetTiles(ctx: CanvasRenderingContext2D): void {
