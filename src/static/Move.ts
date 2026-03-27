@@ -73,7 +73,7 @@ export class Move {
 
     // Navigate ghost from inside the house to the exit tile (col 13, row 14)
     static ghostExit(ghost: IGameObject): void {
-        const step  = 2 * ghost.moveSpeed * Time.scaledDeltaTime * Draw.normalizedUnit();
+        const step  = ghost.moveSpeed * Time.scaledDeltaTime * Draw.normalizedUnit();
         const exitX = 13 * unit + unit / 2; // pixel 270 — center of exit column
         const exitY = 14 * unit + unit / 2; // pixel 290 — corridor above door
 
