@@ -932,6 +932,7 @@ window.onload = function () {
             <label><input type="checkbox" id="dbg-viz"> Targeting viz</label>
             <label><input type="checkbox" id="dbg-modes"> Ghost modes</label>
             <label><input type="checkbox" id="dbg-redzones"> Red zones</label>
+            <label><input type="checkbox" id="dbg-ghostpaths"> Ghost paths</label>
             <label><input type="checkbox" id="dbg-tilepicker"> Tile picker</label>
             <button id="dbg-pause">⏸ Pause</button>
         `;
@@ -953,6 +954,9 @@ window.onload = function () {
         };
         (document.getElementById('dbg-redzones') as HTMLInputElement).onchange = (e) => {
             gameState.debugShowRedZones = (e.target as HTMLInputElement).checked;
+        };
+        (document.getElementById('dbg-ghostpaths') as HTMLInputElement).onchange = (e) => {
+            gameState.debugShowGhostPaths = (e.target as HTMLInputElement).checked;
         };
         (document.getElementById('dbg-tilepicker') as HTMLInputElement).onchange = (e) => {
             gameState.debugTilePicker = (e.target as HTMLInputElement).checked;

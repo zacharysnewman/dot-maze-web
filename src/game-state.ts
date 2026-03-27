@@ -48,6 +48,7 @@ export const gameState = {
     debugPinkyAhead: null as { x: number; y: number } | null,
     debugClydeDistToPacman: 0,
     debugShowRedZones: false,
+    debugShowGhostPaths: false,
     debugTilePicker: false,
     debugSelectedTile: null as { x: number; y: number } | null,
 };

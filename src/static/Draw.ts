@@ -178,14 +178,14 @@ export class Draw {
             ctx.arc(x + side * eyeOffsetX, y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
             ctx.fill();
         }
-        // Frowny mouth
-        const mouthY = y + ghostSize * 0.3;
-        const mouthR = ghostSize * 0.35;
+        // Frowny mouth — center placed below so the arc curves upward (∩ shape)
+        const mouthCenterY = y + ghostSize * 0.5;
+        const mouthR = ghostSize * 0.28;
         ctx.strokeStyle = dotColor;
         ctx.lineWidth = Math.max(1, ghostSize * 0.12);
         ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.arc(x, mouthY, mouthR, 0.2 * Math.PI, 0.8 * Math.PI, false);
+        ctx.arc(x, mouthCenterY, mouthR, Math.PI, 0, false); // left→top→right = frown
         ctx.stroke();
     }
 
@@ -455,6 +455,7 @@ export class Draw {
         if (gameState.debugShowTargetTiles)  Draw.debugTargetTiles(ctx);
         if (gameState.debugShowTargetingViz) Draw.debugTargetingViz(ctx);
         if (gameState.debugShowModes)        Draw.debugModes(ctx);
+        if (gameState.debugShowGhostPaths)   Draw.debugGhostPaths(ctx);
         if (gameState.debugTilePicker)       Draw.debugTilePickerOverlay(ctx);
     }
 
@@ -576,6 +577,71 @@ export class Draw {
         ctx.closePath();
         ctx.fill();
         ctx.restore();
+    }
+
+    // BFS from ghost tile to target tile, respecting walls (and door for non-eyes).
+    // Returns array of {x,y} tiles from ghost to target, or [] if unreachable.
+    private static bfsPath(
+        sx: number, sy: number,
+        tx: number, ty: number,
+        allowDoor: boolean,
+    ): Array<{ x: number; y: number }> {
+        const key = (x: number, y: number) => `${x},${y}`;
+        const queue: Array<{ x: number; y: number; path: Array<{ x: number; y: number }> }> = [
+            { x: sx, y: sy, path: [{ x: sx, y: sy }] },
+        ];
+        const visited = new Set<string>([key(sx, sy)]);
+        const dirs = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
+        while (queue.length) {
+            const { x, y, path } = queue.shift()!;
+            if (x === tx && y === ty) return path;
+            for (const { dx, dy } of dirs) {
+                const nx = x + dx, ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= gridW || ny >= gridH) continue;
+                if (visited.has(key(nx, ny))) continue;
+                const tile = Levels.levelSetup[ny]?.[nx] ?? 0;
+                if (tile === 0) continue;
+                if (tile === 2 && !allowDoor) continue;
+                visited.add(key(nx, ny));
+                queue.push({ x: nx, y: ny, path: [...path, { x: nx, y: ny }] });
+            }
+        }
+        return [];
+    }
+
+    private static debugGhostPaths(ctx: CanvasRenderingContext2D): void {
+        for (const ghost of gameState.ghosts) {
+            const mode = ghost.ghostMode;
+            if (!mode || mode === 'house' || mode === 'exiting' || mode === 'frightened') continue;
+            const t = gameState.debugGhostTargets[ghost.color];
+            if (!t) continue;
+
+            const gx = ghost.roundedX(), gy = ghost.roundedY();
+            const allowDoor = mode === 'eyes';
+            const path = Draw.bfsPath(gx, gy, t.x, t.y, allowDoor);
+            if (path.length < 2) continue;
+
+            ctx.save();
+            ctx.globalAlpha = 0.75;
+            ctx.strokeStyle = ghost.color;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 3]);
+
+            for (let i = 0; i < path.length - 1; i++) {
+                const ax = path[i].x * unit + unit / 2,     ay = path[i].y * unit + unit / 2;
+                const bx = path[i+1].x * unit + unit / 2,   by = path[i+1].y * unit + unit / 2;
+                // Segment line
+                ctx.beginPath();
+                ctx.moveTo(ax, ay);
+                ctx.lineTo(bx, by);
+                ctx.stroke();
+                // Arrowhead on each segment
+                ctx.setLineDash([]);
+                Draw.debugArrow(ctx, ax, ay, bx, by, ghost.color, 0.75);
+                ctx.setLineDash([4, 3]);
+            }
+            ctx.restore();
+        }
     }
 
     private static debugTargetTiles(ctx: CanvasRenderingContext2D): void {
