@@ -825,18 +825,22 @@ function drawMenuChase(t: number): void {
     const size = scale * unit;
     const y = unit * 28.5;
     const spacing = unit * 1.8;
+    const spacingB = unit * 2.8;  // wider spacing for phase B
     const ghostColors = ['red', '#ffb8ff', 'cyan', 'orange'];
-    const HALF = 4;
-    const CYCLE = HALF * 2;
+    const PHASE_A = 4;
+    const PAUSE   = 1;
+    const PHASE_B = 4;
+    const CYCLE   = PHASE_A + PAUSE + PHASE_B;
     const totalDist = w + 2 * unit + ghostColors.length * spacing;
-    const phase = Math.floor((t % CYCLE) / HALF);
-    const progress = ((t % CYCLE) % HALF) / HALF;
+    const totalDistB = w + 2 * unit + ghostColors.length * spacingB;
+    const cycleT = t % CYCLE;
 
     const frames = [0.0, 0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1];
     const mouthOpen = frames[Math.floor(t * 30) % frames.length];
 
-    if (phase === 0) {
-        // Pac-Man fleeing right, ghosts chasing
+    if (cycleT < PHASE_A) {
+        // Phase A: Pac-Man fleeing right, ghosts chasing
+        const progress = cycleT / PHASE_A;
         const pacX = -unit + totalDist * progress;
         for (let i = ghostColors.length - 1; i >= 0; i--) {
             const gx = pacX - (i + 1) * spacing;
@@ -847,17 +851,18 @@ function drawMenuChase(t: number): void {
         if (pacX > -2 * unit && pacX < w + 2 * unit) {
             drawMenuPacman(ctx, pacX, y, size, 'right', mouthOpen);
         }
-    } else {
-        // Frightened ghosts fleeing left, Pac-Man chasing (double size)
-        const pacX = w + unit + ghostColors.length * spacing - totalDist * progress;
+    } else if (cycleT >= PHASE_A + PAUSE) {
+        // Phase B: frightened ghosts fleeing left, big Pac-Man chasing
+        const progress = (cycleT - PHASE_A - PAUSE) / PHASE_B;
+        const pacX = w + unit + ghostColors.length * spacingB - totalDistB * progress;
         const pacSize2 = scale * unit * 2;
         for (let i = 0; i < ghostColors.length; i++) {
-            const gx = pacX - (i + 1) * spacing;
+            const gx = pacX - (i + 1) * spacingB;
             if (gx < -2 * unit || gx > w + 2 * unit) continue;
             Draw.drawGhostBody('#0000cc', gx, y, scale);
             Draw.drawFrightenedEyes(gx, y, scale, '#0000cc');
         }
-        if (pacX > -2 * unit && pacX < w + 2 * unit) {
+        if (pacX > -3 * unit && pacX < w + 3 * unit) {
             drawMenuPacman(ctx, pacX, y, pacSize2, 'left', mouthOpen);
         }
     }

@@ -205,8 +205,9 @@ export class Draw {
         curY += ghostSize / 2 + ghostSize / 3;
         ctx.lineTo(curX, curY);
 
-        const ghostBump = ghostSize / 3;
-        for (let i = 0; i < 3; i++) {
+        const numBumps = Math.floor(performance.now() / 400) % 2 === 0 ? 3 : 4;
+        const ghostBump = ghostSize / numBumps;
+        for (let i = 0; i < numBumps; i++) {
             curX -= ghostBump;
             ctx.lineTo(curX, curY);
             ctx.arc(curX, curY, ghostBump, Math.PI * 2, Math.PI, false);
