@@ -178,6 +178,15 @@ export class Draw {
             ctx.arc(x + side * eyeOffsetX, y - eyeOffsetY, eyeRadius, 0, Math.PI * 2);
             ctx.fill();
         }
+        // Frowny mouth
+        const mouthY = y + ghostSize * 0.3;
+        const mouthR = ghostSize * 0.35;
+        ctx.strokeStyle = dotColor;
+        ctx.lineWidth = Math.max(1, ghostSize * 0.12);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.arc(x, mouthY, mouthR, 0.2 * Math.PI, 0.8 * Math.PI, false);
+        ctx.stroke();
     }
 
     static drawGhostBody(color: string, x: number, y: number, scale: number): void {
