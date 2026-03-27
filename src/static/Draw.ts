@@ -36,6 +36,20 @@ export class Draw {
         Draw.rect('black', 0, 0, gameState.canvas.width, gameState.canvas.height);
     }
 
+    // Ghost house perimeter tile ranges — these are drawn explicitly by ghostHouseWalls()
+    // and must be skipped by the generic wall renderer to avoid overlapping lines.
+    private static isGhostHouseTile(x: number, y: number): boolean {
+        // Surrounding 0-tiles that form the ghost house outline:
+        // Top cap: row 13, cols 8-19  |  Bottom cap: row 21, cols 8-19
+        // Left cap: col 8, rows 13-21  |  Right cap: col 19, rows 13-21
+        return (
+            (y === 13 && x >= 8 && x <= 19) ||
+            (y === 21 && x >= 8 && x <= 19) ||
+            (x === 8  && y >= 13 && y <= 21) ||
+            (x === 19 && y >= 13 && y <= 21)
+        );
+    }
+
     static walls(): void {
         const ctx = gameState.ctx;
         ctx.beginPath();
@@ -44,7 +58,7 @@ export class Draw {
 
         for (let y = 0; y < gridH; y++) {
             for (let x = 0; x < gridW; x++) {
-                if (Levels.level1[y][x] === 0) {
+                if (Levels.level1[y][x] === 0 && !Draw.isGhostHouseTile(x, y)) {
                     const drawWall = Draw.getWallType(x, y);
                     drawWall(x * unit, y * unit);
                 }
@@ -52,6 +66,62 @@ export class Draw {
         }
 
         ctx.stroke();
+        Draw.ghostHouseWalls();
+    }
+
+    // Ghost house: double-line rounded rectangle with a door gap at the top center.
+    // The box wraps the 5-tile perimeter (cols 9–18, rows 14–20).
+    // We draw at the mid-line of the surrounding 0-tile ring: offset ±unit/2 from perimeter edge.
+    static ghostHouseWalls(): void {
+        const ctx = gameState.ctx;
+
+        // Center of the ghost house rectangle (mid of the surrounding wall tiles)
+        const L = 8.5 * unit;   // between col 8 and col 9
+        const R = 19.5 * unit;  // between col 19 and col 18
+        const T = 13.5 * unit;  // between row 13 and row 14
+        const B = 21.5 * unit;  // between row 21 and row 20 — wait, row 20 is 5-tile, row 21 is 0? Let me use 20.5
+
+        const doorL = 13 * unit;        // left edge of door gap (col 13)
+        const doorR = 15 * unit;        // right edge of door gap (col 15)
+        const r     = unit * 0.6;       // corner radius
+        const gap   = 4;                // half-spacing between double lines
+        const capR  = gap;              // radius of rounded end caps at door gap
+
+        ctx.strokeStyle = 'blue';
+        ctx.lineWidth = 2;
+
+        for (const d of [-gap, gap]) {
+            const l = L + d, rr = R - d, t = T + d, b = B - d;
+            const rc = Math.max(r - Math.abs(d), 2);
+            const dl = doorL - d, dr = doorR + d;
+
+            ctx.beginPath();
+            // Start at left end of door gap on top wall
+            ctx.moveTo(dl, t);
+            // Top-left along top wall to corner
+            ctx.lineTo(l + rc, t);
+            ctx.arc(l + rc, t + rc, rc, -Math.PI / 2, Math.PI, true);
+            // Left wall down
+            ctx.lineTo(l, b - rc);
+            ctx.arc(l + rc, b - rc, rc, Math.PI, Math.PI / 2, true);
+            // Bottom wall
+            ctx.lineTo(rr - rc, b);
+            ctx.arc(rr - rc, b - rc, rc, Math.PI / 2, 0, true);
+            // Right wall up
+            ctx.lineTo(rr, t + rc);
+            ctx.arc(rr - rc, t + rc, rc, 0, -Math.PI / 2, true);
+            // Top wall right to door gap
+            ctx.lineTo(dr, t);
+            ctx.stroke();
+
+            // Rounded end caps at door gap
+            ctx.beginPath();
+            ctx.arc(dl, t, capR, 0, Math.PI, false);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(dr, t, capR, 0, Math.PI, true);
+            ctx.stroke();
+        }
     }
 
     static pacman(obj: IGameObject): void {

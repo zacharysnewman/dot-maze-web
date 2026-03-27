@@ -7,6 +7,7 @@ import { Move }  from './static/Move';
 import { AI }    from './static/AI';
 import { Levels } from './static/Levels';
 import { Stats }  from './static/Stats';
+import type { HighScoreEntry } from './static/Stats';
 import { Sound }  from './static/Sound';
 import { GameObject } from './object/GameObject';
 import type { IGameObject, Direction } from './types';
@@ -546,6 +547,64 @@ function levelClear(): void {
     });
 }
 
+function showInitialsEntry(onDone: () => void): void {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = [
+        'position:fixed;inset:0;z-index:2000',
+        'background:rgba(0,0,0,0.9)',
+        'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px',
+        'font-family:monospace;color:white',
+    ].join(';');
+
+    const title = document.createElement('div');
+    title.textContent = 'ENTER INITIALS';
+    title.style.cssText = 'font-size:28px;font-weight:bold;color:yellow;letter-spacing:4px';
+
+    const scoreEl = document.createElement('div');
+    scoreEl.textContent = `SCORE  ${Stats.currentScore}`;
+    scoreEl.style.cssText = 'font-size:22px';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 3;
+    (input as HTMLInputElement & { autocomplete: string }).autocomplete = 'off';
+    input.style.cssText = [
+        'font-family:monospace;font-size:48px;font-weight:bold',
+        'text-align:center;text-transform:uppercase',
+        'background:#111;color:yellow;border:3px solid #666',
+        'border-radius:8px;padding:8px 16px;width:160px',
+        'letter-spacing:12px;outline:none',
+    ].join(';');
+
+    const btn = document.createElement('button');
+    btn.textContent = 'DONE';
+    btn.style.cssText = [
+        'font-family:monospace;font-size:24px;font-weight:bold',
+        'background:#222;color:white;border:2px solid #888',
+        'border-radius:8px;padding:12px 40px;cursor:pointer;letter-spacing:2px',
+    ].join(';');
+
+    function submit(): void {
+        const raw = input.value.replace(/[^A-Za-z]/g, '');
+        const initials = (raw || 'AAA').toUpperCase().padEnd(3, 'A').slice(0, 3);
+        Stats.saveScore(initials, Stats.currentScore);
+        document.body.removeChild(overlay);
+        onDone();
+    }
+
+    input.oninput = () => { input.value = input.value.replace(/[^A-Za-z]/g, '').toUpperCase(); };
+    input.onkeydown = (e) => { if (e.key === 'Enter' && input.value.length > 0) submit(); };
+    btn.onclick = submit;
+
+    overlay.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+    overlay.addEventListener('touchend',   (e) => e.stopPropagation(), { passive: true });
+    overlay.addEventListener('click',      (e) => e.stopPropagation());
+
+    overlay.append(title, scoreEl, input, btn);
+    document.body.appendChild(overlay);
+    setTimeout(() => input.focus(), 80);
+}
+
 function loseLife(): void {
     if (gameState.frozen || gameState.gameOver) return;
     gameState.frozen = true;
@@ -554,8 +613,16 @@ function loseLife(): void {
 
     if (Stats.lives <= 0) {
         gameState.gameOver = true;
-        Stats.saveScore(Stats.currentScore);
-        Time.addTimer(4.0, () => { returningToMenu = true; });
+        // After 2s of game-over screen: enter initials if score qualifies, then return to menu
+        Time.addTimer(2.0, () => {
+            if (Stats.qualifiesForTopTen(Stats.currentScore)) {
+                showInitialsEntry(() => {
+                    Time.addTimer(1.5, () => { returningToMenu = true; });
+                });
+            } else {
+                Time.addTimer(2.0, () => { returningToMenu = true; });
+            }
+        });
         return;
     }
 
@@ -742,20 +809,16 @@ function startScreenLoop(): void {
     ctx.fillText('PAC-MAN', w / 2, unit * 5);
 
     // High scores
-    const scores = Stats.loadHighScores();
+    const scores: HighScoreEntry[] = Stats.loadHighScores();
     ctx.fillStyle = 'cyan';
     ctx.font = `bold ${Math.round(unit * 0.9)}px monospace`;
     ctx.fillText('HIGH SCORES', w / 2, unit * 10);
     ctx.fillStyle = 'white';
-    if (scores.length === 0) {
-        ctx.fillStyle = '#666';
-        ctx.fillText('none yet', w / 2, unit * 12);
-    } else {
-        for (let i = 0; i < scores.length; i++) {
-            const rank = `${i + 1}.`.padStart(3);
-            const score = String(scores[i]).padStart(7);
-            ctx.fillText(`${rank}  ${score}`, w / 2, unit * 11.5 + i * unit * 1.5);
-        }
+    for (let i = 0; i < scores.length; i++) {
+        const { initials, score } = scores[i];
+        const rank = `${i + 1}.`.padStart(3);
+        const line = `${rank} ${initials} ${String(score).padStart(6)}`;
+        ctx.fillText(line, w / 2, unit * 11.5 + i * unit * 1.5);
     }
 
     // Tap to start
