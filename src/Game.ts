@@ -1,7 +1,6 @@
 import { unit, TUNNEL_ROW, TUNNEL_SLOW_COL_MAX, TUNNEL_SLOW_COL_MIN } from './constants';
 import { gameState } from './game-state';
 import { Time }  from './static/Time';
-import { Input } from './static/Input';
 import { Draw }  from './static/Draw';
 import { Move }  from './static/Move';
 import { AI }    from './static/AI';
@@ -11,6 +10,10 @@ import type { HighScoreEntry } from './static/Stats';
 import { Sound }  from './static/Sound';
 import { GameObject } from './object/GameObject';
 import type { IGameObject, Direction } from './types';
+import { KeyboardPlayerInput } from './input/KeyboardPlayerInput';
+import { TouchPlayerInput    } from './input/TouchPlayerInput';
+import { GamepadPlayerInput  } from './input/GamepadPlayerInput';
+import { CompositePlayerInput } from './input/CompositePlayerInput';
 
 // Starting tile positions for each actor
 const START = {
@@ -741,12 +744,14 @@ function update(): void {
         gameStarted = false;
         Sound.stopSiren();
         menuMusicPlaying = false; // startScreenLoop will auto-play since audio is unlocked
+        p1Input?.destroy();
+        p1Input = null;
         startScreenLoop();
         return; // end this loop; startScreenLoop starts its own rAF
     }
 
     if (!gameState.frozen && !gameState.gameOver) {
-        Input.update();
+        p1Input?.update(gameState.pacman);
         updateScatterChaseMode(Time.deltaTime);
         updateFrightenedMode(Time.deltaTime);
         updateElroy();
@@ -810,6 +815,13 @@ function start(): void {
     gameState.gameOver = false;
     AI.resetPrng();
 
+    p1Input?.destroy();
+    p1Input = new CompositePlayerInput([
+        new KeyboardPlayerInput(),
+        new TouchPlayerInput(),
+        new GamepadPlayerInput(0),
+    ]);
+
     Sound.stopMenuMusic();
     menuMusicPlaying = false;
 
@@ -826,6 +838,8 @@ function start(): void {
 }
 
 // ── Start Screen ──────────────────────────────────────────────────────────────
+
+let p1Input: CompositePlayerInput | null = null;
 
 let gameStarted = false;
 let returningToMenu = false;
@@ -960,51 +974,6 @@ function startScreenLoop(): void {
     window.requestAnimationFrame(startScreenLoop);
 }
 
-function setupTouchControls(): void {
-    let touchStartX = 0;
-    let touchStartY = 0;
-    let swipeFiredThisTouch = false;
-    const minSwipeDistance = 40;
-
-    function applySwipe(dx: number, dy: number): void {
-        if (Math.abs(dx) > Math.abs(dy)) {
-            Input.bufferedDir = dx < 0 ? 'left' : 'right';
-        } else {
-            Input.bufferedDir = dy < 0 ? 'up' : 'down';
-        }
-        Input.bufferedDirFramesLeft = Input.BUFFER_FRAMES;
-    }
-
-    document.addEventListener('touchstart', (e: TouchEvent) => {
-        e.preventDefault();
-        Sound.init();
-        touchStartX = e.changedTouches[0].clientX;
-        touchStartY = e.changedTouches[0].clientY;
-        swipeFiredThisTouch = false;
-    }, { passive: false });
-
-    document.addEventListener('touchmove', (e: TouchEvent) => {
-        e.preventDefault();
-        const dx = e.changedTouches[0].clientX - touchStartX;
-        const dy = e.changedTouches[0].clientY - touchStartY;
-        if (Math.abs(dx) < minSwipeDistance && Math.abs(dy) < minSwipeDistance) return;
-        // Reset origin so the next segment of finger movement registers as a new swipe
-        touchStartX = e.changedTouches[0].clientX;
-        touchStartY = e.changedTouches[0].clientY;
-        swipeFiredThisTouch = true;
-        applySwipe(dx, dy);
-    }, { passive: false });
-
-    document.addEventListener('touchend', (e: TouchEvent) => {
-        e.preventDefault();
-        if (swipeFiredThisTouch) return;
-        const dx = e.changedTouches[0].clientX - touchStartX;
-        const dy = e.changedTouches[0].clientY - touchStartY;
-        if (Math.abs(dx) < minSwipeDistance && Math.abs(dy) < minSwipeDistance) return;
-        applySwipe(dx, dy);
-    }, { passive: false });
-}
-
 function resizeCanvas(): void {
     const canvas = gameState.canvas;
     const scale = Math.min(window.innerWidth / 560, window.innerHeight / 720);
@@ -1019,7 +988,6 @@ window.onload = function () {
 
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
-    setupTouchControls();
 
     if (new URLSearchParams(window.location.search).get('dev') === 'true') {
         gameState.debugEnabled = true;
@@ -1137,8 +1105,7 @@ window.onload = function () {
         start();
     }
 
-    document.onkeydown = (e: KeyboardEvent) => { handleMenuInteraction(); Input.checkKeyDown(e); };
-    document.onkeyup   = Input.checkKeyUp;
+    document.onkeydown = (e: KeyboardEvent) => { handleMenuInteraction(); };
     document.addEventListener('click', handleMenuInteraction);
     document.addEventListener('touchstart', handleMenuInteraction as EventListener, { passive: false });
 
