@@ -884,6 +884,7 @@ let menuMusicPlaying = false; // true while menu music is actively playing
 
 let menuAnimTime = 0;
 let menuAnimLastTs = 0;
+let startScreenPrevA = false; // tracks gamepad A button state for rising-edge detection
 
 function drawMenuPacman(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, dir: 'left' | 'right', mouthOpen: number): void {
     const dirMultiplier = dir === 'right' ? 0 : 1;
@@ -981,15 +982,23 @@ function handleMenuInteraction(): void {
 function playerSelectLoop(): void {
     type SlotDisplay = { id: number; active: boolean; inputLabel: string };
 
+    let controllerMode = false; // when true, gamepads shift: pad[0]=P2, pad[1]=P3, pad[2]=P4
+
+    function connectedCount(): number { return GamepadPlayerInput.connectedIndices().length; }
+    function canToggle(): boolean { return connectedCount() < 4; }
+    function activeMode(): boolean { return controllerMode && canToggle(); }
+
     function buildSlots(): SlotDisplay[] {
         const connected = GamepadPlayerInput.connectedIndices();
+        const mode = activeMode();
         return [1, 2, 3, 4].map(id => {
-            const hasGamepad = connected.includes(id - 1);
-            const active = id === 1 || hasGamepad;
-            const label = id === 1
-                ? (hasGamepad ? 'KEYS + PAD 1' : 'KEYS / TOUCH')
-                : (hasGamepad ? `PAD ${id}` : 'NO PAD');
-            return { id, active, inputLabel: label };
+            if (id === 1) {
+                const hasGamepad = !mode && connected.includes(0);
+                return { id, active: true, inputLabel: hasGamepad ? 'KEYS + PAD 1' : 'KEYS / TOUCH' };
+            }
+            const padIndex = mode ? id - 2 : id - 1;
+            const hasGamepad = padIndex >= 0 && connected.includes(padIndex);
+            return { id, active: hasGamepad, inputLabel: hasGamepad ? `PAD ${padIndex + 1}` : 'NO PAD' };
         });
     }
 
@@ -1001,48 +1010,83 @@ function playerSelectLoop(): void {
         if (selectRunning) slots = buildSlots();
     });
 
+    function toggleMode(): void {
+        if (!canToggle()) return;
+        controllerMode = !controllerMode;
+        slots = buildSlots();
+    }
+
     function confirmAndStart(): void {
         if (!selectRunning) return;
         selectRunning = false;
-
-        // Build confirmed slots with freshly constructed input instances
+        const mode = activeMode();
         const confirmedSlots: ConfirmedSlot[] = slots
             .filter(s => s.active)
             .map(s => {
                 if (s.id === 1) {
-                    return {
-                        id: 1,
-                        input: new CompositePlayerInput([
-                            new KeyboardPlayerInput(),
-                            new TouchPlayerInput(),
-                            new GamepadPlayerInput(0),
-                        ]) as PlayerInput,
-                    };
+                    const inputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
+                    if (!mode) inputs.push(new GamepadPlayerInput(0));
+                    return { id: 1, input: new CompositePlayerInput(inputs) as PlayerInput };
                 }
-                return { id: s.id, input: new GamepadPlayerInput(s.id - 1) as PlayerInput };
+                const padIndex = mode ? s.id - 2 : s.id - 1;
+                return { id: s.id, input: new GamepadPlayerInput(padIndex) as PlayerInput };
             });
-
         start(confirmedSlots);
     }
 
+    // Gamepad state tracking for rising-edge detection
+    const prevBtns: boolean[][] = [[], [], [], []];
+
     function selectFrame(): void {
         if (!selectRunning) return;
-        Draw.playerSelectScreen(slots);
+
+        // Poll gamepads
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        for (let gi = 0; gi < gamepads.length; gi++) {
+            const gp = gamepads[gi];
+            const prev = prevBtns[gi] ?? [];
+            if (!gp) { prevBtns[gi] = []; continue; }
+            const aPressed  = gp.buttons[0]?.pressed  ?? false;
+            const dLeft     = gp.buttons[14]?.pressed ?? false;
+            const dRight    = gp.buttons[15]?.pressed ?? false;
+            if (aPressed && !prev[0])  confirmAndStart();
+            if ((dLeft && !prev[14]) || (dRight && !prev[15])) toggleMode();
+            prevBtns[gi] = Array.from(gp.buttons, b => b.pressed);
+        }
+
+        Draw.playerSelectScreen(slots, controllerMode, canToggle());
         window.requestAnimationFrame(selectFrame);
     }
 
-    // Override key handler for this screen; click/touch use { once: true }
-    document.onkeydown = (e: KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ' ') confirmAndStart();
+    // Touch swipe left/right to toggle mode
+    let touchStartX = 0;
+    const onTouchStart = (e: TouchEvent) => { touchStartX = e.touches[0].clientX; };
+    const onTouchEnd = (e: TouchEvent) => {
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        if (Math.abs(dx) > 40) { e.preventDefault(); toggleMode(); }
+        else { e.preventDefault(); confirmAndStart(); }
     };
-    document.addEventListener('click',     confirmAndStart, { once: true });
-    document.addEventListener('touchend',  confirmAndStart as EventListener, { once: true, passive: true } as EventListenerOptions);
+    document.addEventListener('touchstart', onTouchStart as EventListener, { passive: true });
+    document.addEventListener('touchend',   onTouchEnd as EventListener,   { passive: false } as EventListenerOptions);
+
+    document.onkeydown = (e: KeyboardEvent) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') toggleMode();
+        else if (e.key === 'Enter' || e.key === ' ') confirmAndStart();
+    };
+    document.addEventListener('click', confirmAndStart, { once: true });
 
     selectFrame();
 }
 
 function startScreenLoop(): void {
     if (gameStarted) return;
+
+    // Poll gamepads for A button (rising edge only)
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    let aDown = false;
+    for (const gp of gamepads) { if (gp?.buttons[0]?.pressed) { aDown = true; break; } }
+    if (aDown && !startScreenPrevA) handleMenuInteraction();
+    startScreenPrevA = aDown;
 
     // Auto-play menu music after returning from a game (audio already unlocked)
     if (audioUnlocked && !menuMusicPlaying) {

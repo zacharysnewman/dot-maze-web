@@ -549,7 +549,7 @@ export class Draw {
         ctx.fillText(`SCORE  ${Stats.currentScore}`, cx, cy + unit * 1.2);
     }
 
-    static playerSelectScreen(slots: { id: number; active: boolean; inputLabel: string }[]): void {
+    static playerSelectScreen(slots: { id: number; active: boolean; inputLabel: string }[], controllerMode = false, canToggle = false): void {
         const ctx = gameState.ctx;
         const w = gameState.canvas.width;
         const h = gameState.canvas.height;
@@ -609,14 +609,25 @@ export class Draw {
             }
         }
 
+        // Mode toggle row
+        if (canToggle) {
+            const modeLabel = controllerMode ? 'PAD SHIFT' : 'STANDARD';
+            ctx.font = `bold ${Math.round(unit * 0.75)}px monospace`;
+            ctx.fillStyle = '#aaa';
+            ctx.fillText(`◄  ${modeLabel}  ►`, w / 2, unit * 16);
+            ctx.font = `${Math.round(unit * 0.5)}px monospace`;
+            ctx.fillStyle = '#555';
+            ctx.fillText('← → or swipe to switch', w / 2, unit * 17.2);
+        }
+
         // Instructions
         ctx.fillStyle = 'white';
         ctx.font = `bold ${Math.round(unit * 0.85)}px monospace`;
-        ctx.fillText('TAP OR PRESS START', w / 2, unit * 17);
+        ctx.fillText('TAP OR PRESS START', w / 2, unit * 18.5);
 
         ctx.fillStyle = '#888';
         ctx.font = `${Math.round(unit * 0.6)}px monospace`;
-        ctx.fillText('Connect controllers for P2–P4', w / 2, unit * 18.5);
+        ctx.fillText('Connect controllers for more players', w / 2, unit * 19.8);
     }
 
     static scorePopups(): void {
