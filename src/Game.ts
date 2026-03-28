@@ -987,7 +987,7 @@ function playerSelectLoop(): void {
             const hasGamepad = connected.includes(id - 1);
             const active = id === 1 || hasGamepad;
             const label = id === 1
-                ? (hasGamepad ? 'KEYS + PAD 1' : 'KEYBOARD')
+                ? (hasGamepad ? 'KEYS + PAD 1' : 'KEYS / TOUCH')
                 : (hasGamepad ? `PAD ${id}` : 'NO PAD');
             return { id, active, inputLabel: label };
         });
