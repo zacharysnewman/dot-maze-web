@@ -9,6 +9,7 @@ export class Sound {
     // ── Menu music (HTMLAudioElement for MP3) ─────────────────────────────────
 
     private static menuAudio: HTMLAudioElement | null = null;
+    private static menuPausedByVisibility = false;
 
     static initMenuMusic(): void {
         if (Sound.menuAudio) return;
@@ -18,10 +19,14 @@ export class Sound {
         Sound.menuAudio = audio;
 
         document.addEventListener('visibilitychange', () => {
-            if (!Sound.menuAudio || Sound.menuAudio.paused) return;
+            if (!Sound.menuAudio) return;
             if (document.hidden) {
-                Sound.menuAudio.pause();
-            } else {
+                if (!Sound.menuAudio.paused) {
+                    Sound.menuAudio.pause();
+                    Sound.menuPausedByVisibility = true;
+                }
+            } else if (Sound.menuPausedByVisibility) {
+                Sound.menuPausedByVisibility = false;
                 Sound.menuAudio.play().catch(() => {/* autoplay blocked — no-op */});
             }
         });
@@ -157,9 +162,9 @@ export class Sound {
 
         // carrier frequency, LFO depth (Hz swing), LFO rate (Hz), volume
         const cfg = {
-            normal: { freq: 220, depth: 70,  rate: 1.5, vol: 0.042 },
-            eyes:   { freq: 480, depth: 130, rate: 3.5, vol: 0.042 },
-            blue:   { freq: 110, depth: 45,  rate: 6.0, vol: 0.042 },
+            normal: { freq: 220, depth: 70,  rate: 1.5, vol: 0.025 },
+            eyes:   { freq: 480, depth: 130, rate: 3.5, vol: 0.025 },
+            blue:   { freq: 110, depth: 45,  rate: 6.0, vol: 0.025 },
         }[state];
 
         try {
