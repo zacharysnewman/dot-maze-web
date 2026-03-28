@@ -80,33 +80,41 @@ export class AI {
             targetX = EYES_TARGET.x;
             targetY = EYES_TARGET.y;
         } else if (mode === 'scatter') {
-            // Cruise Elroy: Blinky overrides scatter to keep chasing Pac-Man
+            // Cruise Elroy: Blinky overrides scatter to chase nearest player
             if (obj.color === 'red' && gameState.elroyLevel > 0) {
-                targetX = gameState.players[0].actor.roundedX();
-                targetY = gameState.players[0].actor.roundedY();
+                const target = AI.nearestPlayer(obj);
+                if (target) {
+                    targetX = target.roundedX();
+                    targetY = target.roundedY();
+                } else {
+                    const corner = SCATTER_TARGETS[obj.color] ?? { x: 0, y: 0 };
+                    targetX = corner.x;
+                    targetY = corner.y;
+                }
             } else {
                 const corner = SCATTER_TARGETS[obj.color] ?? { x: 0, y: 0 };
                 targetX = corner.x;
                 targetY = corner.y;
             }
         } else {
-            // chase — per-ghost authentic targeting
-            const pacman = gameState.players[0].actor;
+            // chase — per-ghost authentic targeting against nearest active player
+            const pacman = AI.nearestPlayer(obj);
+            if (!pacman) return; // no active players — skip
             if (obj.color === 'hotpink') {
-                // Pinky: 4 tiles ahead of Pac-Man (with up overflow bug)
-                const ahead = AI.tilesAheadOfPacman(4);
+                // Pinky: 4 tiles ahead of nearest player (with up overflow bug)
+                const ahead = AI.tilesAheadOf(pacman, 4);
                 targetX = ahead.x;
                 targetY = ahead.y;
                 if (gameState.debugEnabled) gameState.debugPinkyAhead = ahead;
             } else if (obj.color === 'cyan') {
-                // Inky: doubled vector from Blinky through 2 tiles ahead of Pac-Man
-                const intermediate = AI.tilesAheadOfPacman(2);
+                // Inky: doubled vector from Blinky through 2 tiles ahead of nearest player
+                const intermediate = AI.tilesAheadOf(pacman, 2);
                 const blinky = gameState.blinky;
                 targetX = 2 * intermediate.x - blinky.roundedX();
                 targetY = 2 * intermediate.y - blinky.roundedY();
                 if (gameState.debugEnabled) gameState.debugInkyPivot = intermediate;
             } else if (obj.color === 'orange') {
-                // Clyde: target Pac-Man if ≥8 tiles away, else retreat to scatter corner
+                // Clyde: target nearest player if ≥8 tiles away, else retreat to corner
                 const dist = getDistance(obj.roundedX(), obj.roundedY(), pacman.roundedX(), pacman.roundedY());
                 if (gameState.debugEnabled) gameState.debugClydeDistToPacman = dist;
                 if (dist >= 8) {
@@ -117,7 +125,7 @@ export class AI {
                     targetY = 34;
                 }
             } else {
-                // Blinky: direct pursuit of Pac-Man's current tile
+                // Blinky: direct pursuit of nearest player's tile
                 targetX = pacman.roundedX();
                 targetY = pacman.roundedY();
             }
@@ -155,14 +163,25 @@ export class AI {
         obj.moveDir = bestDir;
     }
 
-    // Returns the tile N steps ahead of Pac-Man in his movement direction.
+    // Returns the nearest active player's actor to the given ghost, or null if none.
+    static nearestPlayer(ghost: IGameObject): IGameObject | null {
+        let nearest: IGameObject | null = null;
+        let minDist = Infinity;
+        for (const player of gameState.players) {
+            if (!player.active || player.dying) continue;
+            const d = getDistance(ghost.roundedX(), ghost.roundedY(), player.actor.roundedX(), player.actor.roundedY());
+            if (d < minDist) { minDist = d; nearest = player.actor; }
+        }
+        return nearest;
+    }
+
+    // Returns the tile N steps ahead of the given actor in its movement direction.
     // Reproduces the upward overflow bug from the original ROM:
-    // when Pac-Man faces up, both x and y are offset by -N (instead of just y).
-    static tilesAheadOfPacman(n: number): { x: number; y: number } {
-        const pacman = gameState.players[0].actor;
-        const px = pacman.roundedX();
-        const py = pacman.roundedY();
-        switch (pacman.moveDir) {
+    // when the actor faces up, both x and y are offset by -N (instead of just y).
+    static tilesAheadOf(actor: IGameObject, n: number): { x: number; y: number } {
+        const px = actor.roundedX();
+        const py = actor.roundedY();
+        switch (actor.moveDir) {
             case 'right': return { x: px + n, y: py     };
             case 'left':  return { x: px - n, y: py     };
             case 'down':  return { x: px,     y: py + n };

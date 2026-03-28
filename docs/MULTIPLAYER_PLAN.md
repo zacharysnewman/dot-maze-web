@@ -134,7 +134,7 @@ Single-player game works identically to before. `players[]` has one entry. No be
 
 ---
 
-## Phase 3 — Game Logic: Collision, Death & Dot Eating
+## Phase 3 — Game Logic: Collision, Death & Dot Eating ✅ COMPLETE
 
 **Goal:** Dot eating, collision, and death all operate on a specific player. The death model changes to support multiple players sitting out mid-level.
 
@@ -207,7 +207,7 @@ Single-player game works as before — die, READY!, same level, 3 lives. The onl
 
 ---
 
-## Phase 4 — Ghost AI Multi-Target
+## Phase 4 — Ghost AI Multi-Target ✅ COMPLETE
 
 **Goal:** Ghost targeting picks the nearest active player rather than a hardcoded single Pacman. In single-player there is only one player so behaviour is identical to before.
 
@@ -242,7 +242,7 @@ Single-player game works identically — `nearestPlayer()` with one active playe
 
 ---
 
-## Phase 5 — Rendering Updates
+## Phase 5 — Rendering Updates ✅ COMPLETE
 
 **Goal:** Canvas correctly renders up to 4 Pacmen and their props. HUD reads from the shared lives pool.
 
@@ -303,7 +303,7 @@ Single-player game works as before with P1's standard no-prop appearance. Props 
 
 ---
 
-## Phase 6 — Player Selection Menu
+## Phase 6 — Player Selection Menu ✅ COMPLETE
 
 **Goal:** Screen between the start screen and gameplay showing player slots and connected controllers.
 
@@ -345,7 +345,7 @@ Player count is determined before the game starts. 1P still works exactly as bef
 
 ---
 
-## Phase 7 — Player Factory & Initialization
+## Phase 7 — Player Factory & Initialization ✅ COMPLETE
 
 **Goal:** `initializeLevel()` and `start()` construct the correct number of player actors from the confirmed slots. All players spawn, move, eat, and die correctly.
 
@@ -384,7 +384,7 @@ Full multiplayer is now live — 1 to 4 players can play simultaneously, each co
 
 ---
 
-## Phase 8 — Menu Flow & Game Over
+## Phase 8 — Menu Flow & Game Over ✅ COMPLETE
 
 **Goal:** Complete end-to-end flow: start screen → player select → gameplay → game over → start screen.
 

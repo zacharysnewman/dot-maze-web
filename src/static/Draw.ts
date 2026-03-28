@@ -1,5 +1,5 @@
 import { unit, gridW, gridH, RED_ZONE_TILES } from '../constants';
-import type { IGameObject, Direction } from '../types';
+import type { IGameObject, Direction, PlayerState } from '../types';
 import { gameState } from '../game-state';
 import { Levels } from './Levels';
 import { Stats } from './Stats';
@@ -54,8 +54,9 @@ export class Draw {
         ctx.stroke();
     }
 
-    static pacman(obj: IGameObject): void {
-        if (gameState.players.some(p => p.dying)) { Draw.pacmanDeathAnim(obj); return; }
+    static pacman(obj: IGameObject, player: PlayerState): void {
+        if (!player.active && !player.dying) return; // sitting out — don't draw
+        if (player.dying) { Draw.pacmanDeathAnim(obj, player); return; }
         const { color, x, y, scale } = obj;
         const ctx = gameState.ctx;
         const frames = [0.0, 0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1];
@@ -84,18 +85,21 @@ export class Draw {
             false);
         ctx.fill();
 
-        // Advance only during active game time (pauses when frozen or eating-ghost freeze)
-        if (!gameState.frozen && !gameState.players.some(p => p.frozen)) {
+        // Draw player prop (P1=none, P2=backpack, P3=bow, P4=tic-tac pill)
+        Draw.pacmanProp(obj, player.id);
+
+        // Advance only during active game time (pauses when frozen or this player's ghost-eat freeze)
+        if (!gameState.frozen && !player.frozen) {
             Draw.pacmanAnimTime += Time.deltaTime;
         }
         Draw.pacmanAnim = Math.floor(Draw.pacmanAnimTime * frameChangePerSecond) % frames.length;
     }
 
-    private static pacmanDeathAnim(obj: IGameObject): void {
+    private static pacmanDeathAnim(obj: IGameObject, player: PlayerState): void {
         const ctx = gameState.ctx;
         const { x, y, scale, moveDir } = obj;
         const size = scale * unit;
-        const p = gameState.players.find(pl => pl.dying)?.deathProgress ?? 0;
+        const p = player.deathProgress;
 
         // Phase 1 (0 → 0.62): mouth opens progressively wider until Pac-Man vanishes
         const OPEN_END = 0.62;
@@ -138,6 +142,78 @@ export class Draw {
             ctx.fill();
         }
         ctx.globalAlpha = 1;
+    }
+
+    // Draw player-specific prop relative to the actor's position and moveDir.
+    // P1: no prop. P2: backpack. P3: bow. P4: tic-tac pill.
+    private static pacmanProp(obj: IGameObject, id: number): void {
+        if (id === 1) return;
+        const ctx = gameState.ctx;
+        const { x, y, scale, moveDir } = obj;
+        const size = scale * unit;
+
+        // "Back" direction vector (opposite of movement)
+        let backDx = 0, backDy = 0;
+        switch (moveDir) {
+            case 'right': backDx = -1; break;
+            case 'left':  backDx = +1; break;
+            case 'down':  backDy = -1; break;
+            case 'up':    backDy = +1; break;
+        }
+
+        if (id === 2) {
+            // Backpack Man — brown rounded rect on the back
+            const pw = size * 0.45;
+            const ph = size * 0.55;
+            const bx = x + backDx * (size * 0.85) - pw / 2;
+            const by = y + backDy * (size * 0.85) - ph / 2;
+            ctx.fillStyle = '#8B5E3C';
+            ctx.beginPath();
+            ctx.roundRect(bx, by, pw, ph, size * 0.08);
+            ctx.fill();
+        } else if (id === 3) {
+            // Miss Pac-Man — purple bow always at 12 o'clock (top of head)
+            const bowY = y - size * 1.15;
+            const bowHalfW = size * 0.3;
+            const bowH = size * 0.22;
+            ctx.fillStyle = '#b44fff';
+            // Left lobe
+            ctx.beginPath();
+            ctx.moveTo(x, bowY);
+            ctx.lineTo(x - bowHalfW, bowY - bowH);
+            ctx.lineTo(x - bowHalfW, bowY + bowH);
+            ctx.closePath();
+            ctx.fill();
+            // Right lobe
+            ctx.beginPath();
+            ctx.moveTo(x, bowY);
+            ctx.lineTo(x + bowHalfW, bowY - bowH);
+            ctx.lineTo(x + bowHalfW, bowY + bowH);
+            ctx.closePath();
+            ctx.fill();
+            // Center knot
+            ctx.beginPath();
+            ctx.arc(x, bowY, size * 0.09, 0, Math.PI * 2);
+            ctx.fill();
+        } else if (id === 4) {
+            // Tic Tac Man — white pill on the back, perpendicular to travel
+            const longAxis  = size * 0.45;
+            const shortAxis = size * 0.22;
+            // Pill long axis is perpendicular to movement direction
+            const pilW = (backDx !== 0) ? shortAxis : longAxis;
+            const pilH = (backDx !== 0) ? longAxis  : shortAxis;
+            const bx = x + backDx * (size * 0.9) - pilW / 2;
+            const by = y + backDy * (size * 0.9) - pilH / 2;
+            ctx.fillStyle = '#f0f0f0';
+            ctx.beginPath();
+            ctx.roundRect(bx, by, pilW, pilH, Math.min(pilW, pilH) / 2);
+            ctx.fill();
+            ctx.strokeStyle = '#aaaaaa';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(bx, by, pilW, pilH, Math.min(pilW, pilH) / 2);
+            ctx.stroke();
+        }
     }
 
     static getFrightenedDuration(level: number): number {
@@ -189,7 +265,6 @@ export class Draw {
     }
 
     static ghost(obj: IGameObject): void {
-        if (gameState.players.some(p => p.dying)) return;
         const { color, x, y, scale, ghostMode } = obj;
 
         if (ghostMode === 'eyes') {
@@ -472,6 +547,76 @@ export class Draw {
         ctx.font = `bold ${Math.round(unit * 0.85)}px monospace`;
         ctx.fillStyle = 'white';
         ctx.fillText(`SCORE  ${Stats.currentScore}`, cx, cy + unit * 1.2);
+    }
+
+    static playerSelectScreen(slots: { id: number; active: boolean; inputLabel: string }[]): void {
+        const ctx = gameState.ctx;
+        const w = gameState.canvas.width;
+        const h = gameState.canvas.height;
+
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, w, h);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Title
+        ctx.fillStyle = 'yellow';
+        ctx.font = `bold ${Math.round(unit * 1.3)}px monospace`;
+        ctx.fillText('SELECT PLAYERS', w / 2, unit * 3);
+
+        // Slot cards — 4 columns
+        const margin = unit * 0.5;
+        const cardW = (w - margin * 5) / 4;
+        const cardH = unit * 9;
+        const cardY = unit * 5;
+
+        for (let i = 0; i < 4; i++) {
+            const slot = slots[i];
+            const cx = margin + (cardW + margin) * i + cardW / 2;
+
+            // Card border
+            ctx.strokeStyle = slot.active ? 'yellow' : '#333';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(cx - cardW / 2, cardY, cardW, cardH);
+
+            // Player label
+            ctx.fillStyle = slot.active ? 'yellow' : '#555';
+            ctx.font = `bold ${Math.round(unit * 0.75)}px monospace`;
+            ctx.fillText(`P${slot.id}`, cx, cardY + unit * 1.2);
+
+            // Mini Pac-Man icon
+            const iconR = unit * 0.45;
+            ctx.fillStyle = slot.active ? 'yellow' : '#333';
+            ctx.beginPath();
+            ctx.moveTo(cx, cardY + unit * 3.2);
+            ctx.arc(cx, cardY + unit * 3.2, iconR, 0.2 * Math.PI, 1.8 * Math.PI, false);
+            ctx.closePath();
+            ctx.fill();
+
+            // Input label
+            ctx.fillStyle = slot.active ? '#ccc' : '#444';
+            ctx.font = `${Math.round(unit * 0.5)}px monospace`;
+            ctx.fillText(slot.inputLabel, cx, cardY + unit * 5.2);
+
+            // Status
+            ctx.font = `bold ${Math.round(unit * 0.65)}px monospace`;
+            if (slot.active) {
+                ctx.fillStyle = '#00ff88';
+                ctx.fillText('READY', cx, cardY + unit * 7.0);
+            } else {
+                ctx.fillStyle = '#333';
+                ctx.fillText('NO PAD', cx, cardY + unit * 7.0);
+            }
+        }
+
+        // Instructions
+        ctx.fillStyle = 'white';
+        ctx.font = `bold ${Math.round(unit * 0.85)}px monospace`;
+        ctx.fillText('TAP OR PRESS START', w / 2, unit * 17);
+
+        ctx.fillStyle = '#888';
+        ctx.font = `${Math.round(unit * 0.6)}px monospace`;
+        ctx.fillText('Connect controllers for P2–P4', w / 2, unit * 18.5);
     }
 
     static scorePopups(): void {

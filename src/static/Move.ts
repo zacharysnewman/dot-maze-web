@@ -9,6 +9,7 @@ import type { IGameObject, PlayerState } from '../types';
 
 export class Move {
     static pacman(player: PlayerState): void {
+        if (!player.active || player.dying) return;
         if (gameState.frozen || player.frozen) return;
         Move.moveObject(player.actor);
 
