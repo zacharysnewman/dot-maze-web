@@ -148,9 +148,9 @@ export class Sound {
 
         // carrier frequency, LFO depth (Hz swing), LFO rate (Hz), volume
         const cfg = {
-            normal: { freq: 220, depth: 70,  rate: 1.5, vol: 0.07 },
-            eyes:   { freq: 480, depth: 130, rate: 3.5, vol: 0.07 },
-            blue:   { freq: 110, depth: 45,  rate: 6.0, vol: 0.07 },
+            normal: { freq: 220, depth: 70,  rate: 1.5, vol: 0.042 },
+            eyes:   { freq: 480, depth: 130, rate: 3.5, vol: 0.042 },
+            blue:   { freq: 110, depth: 45,  rate: 6.0, vol: 0.042 },
         }[state];
 
         try {
