@@ -605,7 +605,7 @@ function showInitialsEntry(onDone: () => void): void {
     setTimeout(() => input.focus(), 80);
 }
 
-const DEATH_ANIM_DURATION = 1.5;
+const DEATH_ANIM_DURATION = 2.0;
 
 function loseLife(): void {
     if (gameState.frozen || gameState.gameOver) return;
