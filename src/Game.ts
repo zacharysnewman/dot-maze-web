@@ -567,6 +567,7 @@ function showInitialsEntry(onDone: () => void): void {
         'position:fixed;inset:0;z-index:2000',
         'background:rgba(0,0,0,0.9)',
         'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:32px',
+        'padding-bottom:50vh', // shifts content up ~25% of screen height, clear of mobile keyboard
         'font-family:monospace;color:white',
     ].join(';');
 
@@ -603,8 +604,8 @@ function showInitialsEntry(onDone: () => void): void {
     for (let i = 0; i < 3; i++) {
         const slot = document.createElement('div');
         slot.style.cssText = [
-            'width:56px;text-align:center',
-            'font-size:56px;font-weight:bold',
+            'width:84px;text-align:center',
+            'font-size:84px;font-weight:bold',
             'border-bottom:3px solid #666',
             'padding-bottom:6px;line-height:1.1',
             'color:#444',
@@ -630,9 +631,9 @@ function showInitialsEntry(onDone: () => void): void {
     const btn = document.createElement('button');
     btn.textContent = 'DONE';
     btn.style.cssText = [
-        'font-family:monospace;font-size:24px;font-weight:bold',
+        'font-family:monospace;font-size:48px;font-weight:bold',
         'background:#222;color:white;border:2px solid #888',
-        'border-radius:8px;padding:12px 40px;cursor:pointer;letter-spacing:2px',
+        'border-radius:8px;padding:24px 80px;cursor:pointer;letter-spacing:2px',
     ].join(';');
 
     function submit(): void {
