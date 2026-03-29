@@ -647,7 +647,7 @@ function loseLife(player: PlayerState): void {
 
         // Each death costs one shared life immediately
         gameState.sharedLives--;
-        if (gameState.sharedLives <= 0) {
+        if (gameState.sharedLives < 0) {
             triggerGameOver();
         } else if (gameState.players.some(p => p.active)) {
             // Other players still alive — dead player sits out until next level
