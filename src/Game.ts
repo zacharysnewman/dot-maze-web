@@ -1257,6 +1257,22 @@ window.onload = function () {
             #debug-panel button:hover { background: #444; }
             #dbg-reset-scores { color: #ff8888; border-color: #884444; }
             #dbg-reset-scores:hover { background: #441111; }
+            #dbg-error-log {
+                margin-top: 12px; max-height: 160px; overflow-y: auto;
+                background: #1a0000; border: 1px solid #663333;
+                border-radius: 4px; padding: 6px 8px;
+                font-size: 14px; color: #ff8888; line-height: 1.4;
+                word-break: break-all; display: none;
+            }
+            #dbg-error-log-header {
+                display: flex; align-items: center; justify-content: space-between;
+                margin-top: 12px; font-size: 16px; color: #ff8888; display: none;
+            }
+            #dbg-clear-errors {
+                font-size: 13px; color: #aaa; background: none;
+                border: 1px solid #555; border-radius: 3px;
+                padding: 2px 6px; cursor: pointer; margin-top: 0; width: auto; min-height: 0;
+            }
             </style>
             <h3 id="dbg-header">⚙ DEBUG <span id="dbg-toggle">▲</span></h3>
             <div id="dbg-content">
@@ -1269,6 +1285,8 @@ window.onload = function () {
                 <button id="dbg-pause">⏸ Pause</button>
                 <button id="dbg-initials">✏ Initials Screen</button>
                 <button id="dbg-reset-scores">🗑 Reset High Scores</button>
+                <div id="dbg-error-log-header">⚠ Errors <button id="dbg-clear-errors">Clear</button></div>
+                <div id="dbg-error-log"></div>
             </div>
         `;
         document.body.appendChild(panel);
@@ -1316,6 +1334,36 @@ window.onload = function () {
                 setTimeout(() => { resetScoresBtn.textContent = '🗑 Reset High Scores'; }, 2000);
             }
         };
+
+        // Error log
+        const errorLog    = document.getElementById('dbg-error-log')        as HTMLDivElement;
+        const errorHeader = document.getElementById('dbg-error-log-header') as HTMLDivElement;
+        function logError(msg: string): void {
+            errorLog.style.display   = 'block';
+            errorHeader.style.display = 'flex';
+            const line = document.createElement('div');
+            const time = Time.timeSinceStart.toFixed(2);
+            line.textContent = `[${time}s] ${msg}`;
+            errorLog.appendChild(line);
+            errorLog.scrollTop = errorLog.scrollHeight;
+        }
+        (document.getElementById('dbg-clear-errors') as HTMLButtonElement).onclick = () => {
+            errorLog.innerHTML = '';
+            errorLog.style.display    = 'none';
+            errorHeader.style.display = 'none';
+        };
+        // Intercept console.error so the existing try-catch in update() surfaces here
+        const _origConsoleError = console.error.bind(console);
+        console.error = (...args: unknown[]) => {
+            _origConsoleError(...args);
+            logError(args.map(a => a instanceof Error ? `${a.message}\n${a.stack ?? ''}` : String(a)).join(' '));
+        };
+        window.addEventListener('error', (e) => {
+            logError(`${e.message} (${e.filename?.split('/').pop() ?? '?'}:${e.lineno})`);
+        });
+        window.addEventListener('unhandledrejection', (e) => {
+            logError(`Unhandled rejection: ${e.reason}`);
+        });
 
         // Collapsible panel
         const content = document.getElementById('dbg-content') as HTMLDivElement;
