@@ -838,7 +838,7 @@ function update(): void {
 function start(slots: ConfirmedSlot[]): void {
     // Full game state reset for a fresh play
     Stats.reset();
-    gameState.sharedLives = 3;
+    gameState.sharedLives = 2;
     gameState.level = 1;
     gameState.scatterChaseIndex = 0;
     gameState.scatterChaseElapsed = 0;
