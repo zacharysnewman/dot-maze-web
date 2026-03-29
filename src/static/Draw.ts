@@ -23,6 +23,15 @@ export class Draw {
     static pacmanAnim = 0;
     static pacmanAnimTime = 0;
 
+    // Call once per frame from the game loop to advance Pac-Man mouth animation.
+    static advancePacmanAnim(): void {
+        if (gameState.frozen) return;
+        const frameChangePerSecond = 30;
+        const frames = [0.0, 0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1];
+        Draw.pacmanAnimTime += Time.deltaTime;
+        Draw.pacmanAnim = Math.floor(Draw.pacmanAnimTime * frameChangePerSecond) % frames.length;
+    }
+
     static normalizedUnit(): number {
         return 1;
     }
@@ -60,7 +69,6 @@ export class Draw {
         const { color, x, y, scale } = obj;
         const ctx = gameState.ctx;
         const frames = [0.0, 0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1];
-        const frameChangePerSecond = 30;
         const size = scale * unit;
 
         let dirMultiplier = 1;
@@ -87,12 +95,6 @@ export class Draw {
 
         // Draw player prop (P1=none, P2=backpack, P3=bow, P4=tic-tac pill)
         Draw.pacmanProp(obj, player.id);
-
-        // Advance only during active game time (pauses when frozen or this player's ghost-eat freeze)
-        if (!gameState.frozen && !player.frozen) {
-            Draw.pacmanAnimTime += Time.deltaTime;
-        }
-        Draw.pacmanAnim = Math.floor(Draw.pacmanAnimTime * frameChangePerSecond) % frames.length;
     }
 
     private static pacmanDeathAnim(obj: IGameObject, player: PlayerState): void {
