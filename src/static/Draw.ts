@@ -315,6 +315,7 @@ export class Draw {
         ctx.beginPath();
         ctx.arc(x, mouthCenterY, mouthR, Math.PI, 0, false); // left→top→right = frown
         ctx.stroke();
+        ctx.lineCap = 'butt'; // restore default so subsequent strokes (walls) are unaffected
     }
 
     static drawGhostBody(color: string, x: number, y: number, scale: number): void {
