@@ -697,6 +697,8 @@ function loseLife(player: PlayerState): void {
     Time.addTimer(DEATH_ANIM_DURATION, () => {
         // levelClear() resets dying to false — if it already fired, skip this death entirely
         if (!player.dying) return;
+        // Guard: another player's death may have already triggered game over in the same frame
+        if (gameState.gameOver) return;
         player.dying = false;
         player.active = false;
 
@@ -1269,10 +1271,10 @@ window.onload = function () {
         `;
         document.body.appendChild(panel);
 
-        // Stop touch events from bubbling to the document touchstart handler
-        // (which calls e.preventDefault(), blocking browser click synthesis)
+        // Stop all input events from bubbling to document-level game handlers
         panel.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
         panel.addEventListener('touchend',   (e) => e.stopPropagation(), { passive: true });
+        panel.addEventListener('click',      (e) => e.stopPropagation());
 
         (document.getElementById('dbg-targets') as HTMLInputElement).onchange = (e) => {
             gameState.debugShowTargetTiles = (e.target as HTMLInputElement).checked;
@@ -1300,7 +1302,8 @@ window.onload = function () {
         };
 
         (document.getElementById('dbg-initials') as HTMLButtonElement).onclick = () => {
-            showInitialsEntry(() => {});
+            if (Stats.currentScore === 0) Stats.currentScore = 12345; // mock score for preview
+            showInitialsEntry(() => { Stats.currentScore = 0; });
         };
 
         const resetScoresBtn = document.getElementById('dbg-reset-scores') as HTMLButtonElement;

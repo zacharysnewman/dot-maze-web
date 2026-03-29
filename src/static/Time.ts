@@ -11,6 +11,7 @@ export class Time {
     static setup(): void {
         Time.startTime = new Date().getTime();
         Time.timeSinceStart = new Date().getTime() - Time.startTime;
+        Time.timers = [];
     }
 
     static update(): void {
