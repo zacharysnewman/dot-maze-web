@@ -566,7 +566,7 @@ function showInitialsEntry(onDone: () => void): void {
     overlay.style.cssText = [
         'position:fixed;inset:0;z-index:2000',
         'background:rgba(0,0,0,0.9)',
-        'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px',
+        'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:32px',
         'font-family:monospace;color:white',
     ].join(';');
 
@@ -578,17 +578,45 @@ function showInitialsEntry(onDone: () => void): void {
     scoreEl.textContent = `SCORE  ${Stats.currentScore}`;
     scoreEl.style.cssText = 'font-size:22px';
 
+    // Hidden input — captures keyboard / mobile keyboard; opacity:0 keeps it in the flow
     const input = document.createElement('input');
     input.type = 'text';
     input.maxLength = 3;
     (input as HTMLInputElement & { autocomplete: string }).autocomplete = 'off';
-    input.style.cssText = [
-        'font-family:monospace;font-size:48px;font-weight:bold',
-        'text-align:center;text-transform:uppercase',
-        'background:#111;color:yellow;border:3px solid #666',
-        'border-radius:8px;padding:8px 16px;width:160px',
-        'letter-spacing:12px;outline:none',
-    ].join(';');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('autocapitalize', 'characters');
+    input.style.cssText = 'position:fixed;opacity:0.01;width:1px;height:1px;top:50%;left:50%';
+
+    // Three slot divs — fixed width for monospaced look regardless of font
+    const slotsRow = document.createElement('div');
+    slotsRow.style.cssText = 'display:flex;gap:20px;cursor:text';
+
+    const slotEls: HTMLDivElement[] = [];
+    for (let i = 0; i < 3; i++) {
+        const slot = document.createElement('div');
+        slot.style.cssText = [
+            'width:56px;text-align:center',
+            'font-size:56px;font-weight:bold',
+            'border-bottom:3px solid #666',
+            'padding-bottom:6px;line-height:1.1',
+            'color:#444',
+        ].join(';');
+        slot.textContent = '_';
+        slotsRow.appendChild(slot);
+        slotEls.push(slot);
+    }
+
+    function updateSlots(): void {
+        const val = input.value;
+        for (let i = 0; i < 3; i++) {
+            const filled = i < val.length;
+            const active = i === val.length;
+            slotEls[i].textContent = filled ? val[i] : '_';
+            slotEls[i].style.color = filled ? 'yellow' : (active ? '#aaa' : '#444');
+            slotEls[i].style.borderBottomColor = active ? 'white' : (filled ? 'yellow' : '#444');
+        }
+    }
+    updateSlots();
 
     const btn = document.createElement('button');
     btn.textContent = 'DONE';
@@ -600,21 +628,25 @@ function showInitialsEntry(onDone: () => void): void {
 
     function submit(): void {
         const raw = input.value.replace(/[^A-Za-z]/g, '');
-        const initials = (raw || 'AAA').toUpperCase().padEnd(3, 'A').slice(0, 3);
-        Stats.saveScore(initials, Stats.currentScore);
+        if (raw.length < 3) return; // require exactly 3 letters
+        Stats.saveScore(raw.toUpperCase().slice(0, 3), Stats.currentScore);
         document.body.removeChild(overlay);
         onDone();
     }
 
-    input.oninput = () => { input.value = input.value.replace(/[^A-Za-z]/g, '').toUpperCase(); };
-    input.onkeydown = (e) => { if (e.key === 'Enter' && input.value.length > 0) submit(); };
+    input.oninput = () => {
+        input.value = input.value.replace(/[^A-Za-z]/g, '').toUpperCase();
+        updateSlots();
+    };
+    input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
     btn.onclick = submit;
+    slotsRow.addEventListener('click', () => input.focus());
 
     overlay.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
     overlay.addEventListener('touchend',   (e) => e.stopPropagation(), { passive: true });
     overlay.addEventListener('click',      (e) => e.stopPropagation());
 
-    overlay.append(title, scoreEl, input, btn);
+    overlay.append(title, scoreEl, input, slotsRow, btn);
     document.body.appendChild(overlay);
     setTimeout(() => input.focus(), 80);
 }
