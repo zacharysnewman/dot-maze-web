@@ -616,8 +616,13 @@ function showInitialsEntry(onDone: () => void): void {
     }
     // Input is appended to the overlay (full-screen) instead of slotsWrap
 
+    const hint = document.createElement('div');
+    hint.textContent = 'TAP ANYWHERE TO ENTER INITIALS';
+    hint.style.cssText = 'font-size:20px;color:#666;letter-spacing:2px;text-align:center';
+
     function updateSlots(): void {
         const val = input.value;
+        const done = val.length >= 3;
         for (let i = 0; i < 3; i++) {
             const filled = i < val.length;
             const active = i === val.length;
@@ -625,6 +630,11 @@ function showInitialsEntry(onDone: () => void): void {
             slotEls[i].style.color = filled ? 'yellow' : (active ? '#aaa' : '#444');
             slotEls[i].style.borderBottomColor = active ? 'white' : (filled ? 'yellow' : '#444');
         }
+        // Gray out DONE until all 3 letters entered
+        btn.style.opacity = done ? '1' : '0.35';
+        btn.style.cursor  = done ? 'pointer' : 'default';
+        // Hide hint once typing starts
+        hint.style.visibility = val.length === 0 ? 'visible' : 'hidden';
     }
     updateSlots();
 
@@ -633,7 +643,7 @@ function showInitialsEntry(onDone: () => void): void {
     btn.style.cssText = [
         'font-family:monospace;font-size:48px;font-weight:bold',
         'background:#222;color:white;border:2px solid #888',
-        'border-radius:8px;padding:24px 80px;cursor:pointer;letter-spacing:2px',
+        'border-radius:8px;padding:24px 80px;cursor:default;letter-spacing:2px',
     ].join(';');
 
     function submit(): void {
@@ -658,7 +668,7 @@ function showInitialsEntry(onDone: () => void): void {
     overlay.addEventListener('click',      (e) => e.stopPropagation());
 
     // input is position:absolute inset:0 — contained by the fixed overlay (full screen)
-    overlay.append(title, scoreEl, slotsWrap, btn, input);
+    overlay.append(title, scoreEl, slotsWrap, hint, btn, input);
     document.body.appendChild(overlay);
     // Best-effort autofocus for non-iOS browsers; iOS requires a direct tap on the input
     setTimeout(() => input.focus(), 80);
@@ -1253,6 +1263,7 @@ window.onload = function () {
                 <label><input type="checkbox" id="dbg-ghostpaths"> Ghost paths</label>
                 <label><input type="checkbox" id="dbg-tilepicker"> Tile picker</label>
                 <button id="dbg-pause">⏸ Pause</button>
+                <button id="dbg-initials">✏ Initials Screen</button>
                 <button id="dbg-reset-scores">🗑 Reset High Scores</button>
             </div>
         `;
@@ -1286,6 +1297,10 @@ window.onload = function () {
         pauseBtn.onclick = () => {
             gameState.frozen = !gameState.frozen;
             pauseBtn.textContent = gameState.frozen ? '▶ Resume' : '⏸ Pause';
+        };
+
+        (document.getElementById('dbg-initials') as HTMLButtonElement).onclick = () => {
+            showInitialsEntry(() => {});
         };
 
         const resetScoresBtn = document.getElementById('dbg-reset-scores') as HTMLButtonElement;
