@@ -643,18 +643,19 @@ function loseLife(player: PlayerState): void {
     Sound.death();
 
     Time.addTimer(DEATH_ANIM_DURATION, () => {
+        // levelClear() resets dying to false — if it already fired, skip this death entirely
+        if (!player.dying) return;
         player.dying = false;
         player.active = false;
 
-        // If any other player is still active, game continues — this player sits out
-        if (gameState.players.some(p => p.active)) return;
-
-        // All players are down — consume a shared life
+        // Each death costs one shared life immediately
         gameState.sharedLives--;
         if (gameState.sharedLives <= 0) {
             triggerGameOver();
+        } else if (gameState.players.some(p => p.active)) {
+            // Other players still alive — dead player sits out until next level
         } else {
-            // Revive all players and play READY!
+            // All players down but lives remain — revive everyone and play READY!
             for (const p of gameState.players) { p.active = true; p.dying = false; }
             resetPositions(true);
             gameState.showReady = true;
@@ -813,6 +814,7 @@ function update(): void {
     }
 
     Draw.level();
+    Draw.advancePacmanAnim();
 
     for (const go of gameState.gameObjects) {
         go.update();
@@ -972,9 +974,13 @@ function handleMenuInteraction(): void {
         menuMusicPlaying = true;
         return;
     }
-    // Audio already unlocked — go to player select
+    // Audio already unlocked — go to player select (or skip straight to solo if no controllers)
     gameStarted = true; // stops startScreenLoop from continuing its rAF
-    playerSelectLoop();
+    if (GamepadPlayerInput.connectedIndices().length === 0) {
+        start([{ id: 1, input: new CompositePlayerInput([new KeyboardPlayerInput(), new TouchPlayerInput()]) as PlayerInput }]);
+    } else {
+        playerSelectLoop();
+    }
 }
 
 // ── Player Select Screen ──────────────────────────────────────────────────────
