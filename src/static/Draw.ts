@@ -269,6 +269,9 @@ export class Draw {
     static ghost(obj: IGameObject): void {
         const { color, x, y, scale, ghostMode } = obj;
 
+        // Hide ghosts while all players are dying (no active non-dying player remains)
+        if (gameState.players.length > 0 && gameState.players.every(p => !p.active || p.dying)) return;
+
         if (ghostMode === 'eyes' || ghostMode === 'entering') {
             Draw.drawGhostEyes(color, x, y, scale, obj.moveDir);
             return;
