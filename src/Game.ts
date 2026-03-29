@@ -567,7 +567,7 @@ function showInitialsEntry(onDone: () => void): void {
         'position:fixed;inset:0;z-index:2000',
         'background:rgba(0,0,0,0.9)',
         'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:32px',
-        'padding-bottom:50vh', // shifts content up ~25% of screen height, clear of mobile keyboard
+        'padding-bottom:20vh', // shifts content up ~10% of screen height, clear of mobile keyboard
         'font-family:monospace;color:white',
     ].join(';');
 
