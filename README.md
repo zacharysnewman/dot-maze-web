@@ -1,4 +1,4 @@
-# Pacman Web
+# Pokmon Web
 
 A web-based Pac-Man clone written in TypeScript. The maze, characters, and all visuals are drawn entirely with Canvas 2D stroke/fill calls — no sprites or images. Gameplay faithfully reproduces the original arcade, including authentic ghost AI, speed tables, scatter/chase timing, the ghost house release system, Cruise Elroy, and frightened mode.
 
