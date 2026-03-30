@@ -25,17 +25,31 @@ export class GamepadPlayerInput implements PlayerInput {
 
     private readonly gamepadIndex: number;
 
+    // Indices of gamepads seen via gamepadconnected event (persists even when
+    // navigator.getGamepads() hasn't been polled yet after a page load).
+    private static readonly _seenViaEvent = new Set<number>();
+    static {
+        window.addEventListener('gamepadconnected',    (e: GamepadEvent) => {
+            GamepadPlayerInput._seenViaEvent.add(e.gamepad.index);
+        });
+        window.addEventListener('gamepaddisconnected', (e: GamepadEvent) => {
+            GamepadPlayerInput._seenViaEvent.delete(e.gamepad.index);
+        });
+    }
+
     constructor(gamepadIndex: number) {
         this.gamepadIndex = gamepadIndex;
     }
 
-    // Returns indices of all currently connected gamepads.
+    // Returns indices of all currently connected gamepads, using the union of
+    // the event-tracked set and the live poll so controllers are detected as
+    // soon as the browser reports them (even before a button press on some platforms).
     static connectedIndices(): number[] {
-        const indices: number[] = [];
+        const indices = new Set<number>(GamepadPlayerInput._seenViaEvent);
         for (const gp of navigator.getGamepads()) {
-            if (gp !== null) indices.push(gp.index);
+            if (gp !== null) indices.add(gp.index);
         }
-        return indices;
+        return Array.from(indices).sort((a, b) => a - b);
     }
 
     // Register a callback that fires whenever a gamepad is connected or disconnected.
