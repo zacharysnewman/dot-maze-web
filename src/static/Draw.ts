@@ -165,10 +165,10 @@ export class Draw {
         if (id === 2) {
             // Backpack Man — brown rounded rect on the back, rotates with direction
             const isVertical = backDy !== 0;
-            const pw = size * (isVertical ? 1.1  : 0.45);
-            const ph = size * (isVertical ? 0.45 : 1.1);
+            const pw = size * (isVertical ? 0.825 : 0.45);
+            const ph = size * (isVertical ? 0.45  : 0.825);
             const bx = x + backDx * (size * 0.85) - pw / 2;
-            const by = y + backDy * (size * 0.85) - ph / 2;
+            const by = y + backDy * (size * 0.85) - ph / 2 - size * 0.15;
             ctx.fillStyle = '#8B5E3C';
             ctx.beginPath();
             ctx.roundRect(bx, by, pw, ph, size * 0.08);
