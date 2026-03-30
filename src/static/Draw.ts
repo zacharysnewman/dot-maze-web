@@ -165,10 +165,10 @@ export class Draw {
         if (id === 2) {
             // Backpack Man — brown rounded rect on the back, rotates with direction
             const isVertical = backDy !== 0;
-            const pw = size * (isVertical ? 1.1  : 0.45);
-            const ph = size * (isVertical ? 0.45 : 1.1);
+            const pw = size * (isVertical ? 0.825 : 0.45);
+            const ph = size * (isVertical ? 0.45  : 0.825);
             const bx = x + backDx * (size * 0.85) - pw / 2;
-            const by = y + backDy * (size * 0.85) - ph / 2;
+            const by = y + backDy * (size * 0.85) - ph / 2 - size * 0.15;
             ctx.fillStyle = '#8B5E3C';
             ctx.beginPath();
             ctx.roundRect(bx, by, pw, ph, size * 0.08);
@@ -211,7 +211,7 @@ export class Draw {
             ctx.fill();
         } else if (id === 4) {
             // Tic-Tac-Toe Pac-Man — # grid drawn on body, rotates with moveDir
-            const gridHalf = size * 0.38;
+            const gridHalf = size * 0.55;
             const third    = gridHalf * 0.55;
             const angle = moveDir === 'right' ?  0
                         : moveDir === 'down'  ?  Math.PI / 2
@@ -221,7 +221,7 @@ export class Draw {
             ctx.translate(x, y);
             ctx.rotate(angle);
             ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-            ctx.lineWidth = size * 0.07;
+            ctx.lineWidth = size * 0.1;
             ctx.lineCap = 'round';
             ctx.beginPath();
             // Two horizontal bars
