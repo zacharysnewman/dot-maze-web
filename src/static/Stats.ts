@@ -10,12 +10,12 @@ export interface HighScoreEntry {
 const DEFAULT_SCORES: HighScoreEntry[] = [
     { initials: 'ACE', score: 10000 },
     { initials: 'PRO', score:  9000 },
-    { initials: 'PAC', score:  8000 },
-    { initials: 'GHO', score:  7000 },
-    { initials: 'INK', score:  6000 },
-    { initials: 'PIN', score:  5000 },
-    { initials: 'BLK', score:  4000 },
-    { initials: 'CLY', score:  3000 },
+    { initials: 'MZE', score:  8000 },
+    { initials: 'FOE', score:  7000 },
+    { initials: 'RED', score:  6000 },
+    { initials: 'BLU', score:  5000 },
+    { initials: 'GRN', score:  4000 },
+    { initials: 'ORG', score:  3000 },
     { initials: 'DOT', score:  2000 },
     { initials: 'PWR', score:  1000 },
 ];

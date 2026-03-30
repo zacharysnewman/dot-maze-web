@@ -1220,7 +1220,7 @@ function startScreenLoop(): void {
     // Title
     ctx.fillStyle = 'yellow';
     ctx.font = `bold ${unit * 2}px monospace`;
-    ctx.fillText('PAC-MAN', w / 2, unit * 5);
+    ctx.fillText('DOT MAZE', w / 2, unit * 5);
 
     // High scores
     const scores: HighScoreEntry[] = Stats.loadHighScores();
