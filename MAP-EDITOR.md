@@ -455,11 +455,11 @@ On game exit (returningToMenu flag) → back to editorLoop()
 - [x] Grid overlay, hover highlight
 - [x] Undo/redo (snapshot-based)
 
-### Phase 3 — Spawn & Special Tiles
-- Spawn point placement tools (click to reposition)
-- Enemy house door placement
-- Tunnel row/column configuration
-- Red zone tile toggle
+### Phase 3 — Spawn & Special Tiles ✅
+- [x] Spawn point placement tools (click/drag to reposition: Player, Blinky, Inky, Pinky, Clyde, Fruit)
+- [x] Enemy house door placement
+- [x] Tunnel row configuration (click any tile on the desired row)
+- [x] Red zone tile toggle (click to add, click again to remove; drag to paint/erase)
 
 ### Phase 4 — Validation & Testing
 - BFS reachability checks (`Validate.ts`)
