@@ -175,7 +175,7 @@ export class Draw {
             ctx.fill();
         } else if (id === 3) {
             // Miss Player — purple bow on top of head, rotates with moveDir.
-            // topDx/topDy: direction from pac-center toward bow (left/right keeps world-up).
+            // topDx/topDy: direction from player-center toward bow (left/right keeps world-up).
             // spreadDx/spreadDy: perpendicular (90° CCW from top), lobes fan along this axis.
             let topDx = 0, topDy = -1;
             if      (moveDir === 'up')   { topDx =  1; topDy = 0; }
@@ -603,7 +603,7 @@ export class Draw {
             ? Math.min(1 + connectedCount, 4)
             : Math.min(Math.max(connectedCount, 1), 4);
 
-        // Player count rows (1–4 pac-man icons each)
+        // Player count rows (1–4 player icons each)
         const rowYs = [unit * 9, unit * 11.5, unit * 14, unit * 16.5];
         const iconSpacing = unit * 1.7;
 
