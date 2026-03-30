@@ -211,7 +211,7 @@ export class Draw {
             ctx.fill();
         } else if (id === 4) {
             // Tic-Tac-Toe Pac-Man — # grid drawn on body, rotates with moveDir
-            const gridHalf = size * 0.38;
+            const gridHalf = size * 0.55;
             const third    = gridHalf * 0.55;
             const angle = moveDir === 'right' ?  0
                         : moveDir === 'down'  ?  Math.PI / 2
@@ -221,7 +221,7 @@ export class Draw {
             ctx.translate(x, y);
             ctx.rotate(angle);
             ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-            ctx.lineWidth = size * 0.07;
+            ctx.lineWidth = size * 0.1;
             ctx.lineCap = 'round';
             ctx.beginPath();
             // Two horizontal bars
