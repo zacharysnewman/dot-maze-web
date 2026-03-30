@@ -20,16 +20,16 @@ const FRIGHTENED_FLASH_COUNT: Record<number, number> = {
 type WallDrawFn = (x: number, y: number) => void;
 
 export class Draw {
-    static pacmanAnim = 0;
-    static pacmanAnimTime = 0;
+    static playerAnim = 0;
+    static playerAnimTime = 0;
 
-    // Call once per frame from the game loop to advance Pac-Man mouth animation.
-    static advancePacmanAnim(): void {
+    // Call once per frame from the game loop to advance Player mouth animation.
+    static advancePlayerAnim(): void {
         if (gameState.frozen) return;
         const frameChangePerSecond = 30;
         const frames = [0.0, 0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1];
-        Draw.pacmanAnimTime += Time.deltaTime;
-        Draw.pacmanAnim = Math.floor(Draw.pacmanAnimTime * frameChangePerSecond) % frames.length;
+        Draw.playerAnimTime += Time.deltaTime;
+        Draw.playerAnim = Math.floor(Draw.playerAnimTime * frameChangePerSecond) % frames.length;
     }
 
     static normalizedUnit(): number {
@@ -63,9 +63,9 @@ export class Draw {
         ctx.stroke();
     }
 
-    static pacman(obj: IGameObject, player: PlayerState): void {
+    static player(obj: IGameObject, player: PlayerState): void {
         if (!player.active && !player.dying) return; // sitting out — don't draw
-        if (player.dying) { Draw.pacmanDeathAnim(obj, player); return; }
+        if (player.dying) { Draw.playerDeathAnim(obj, player); return; }
         const { color, x, y, scale } = obj;
         const ctx = gameState.ctx;
         const frames = [0.0, 0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1];
@@ -82,33 +82,33 @@ export class Draw {
         ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(x, y, size,
-            frames[Draw.pacmanAnim] * Math.PI + Math.PI * dirMultiplier,
-            (1.0 + frames[Draw.pacmanAnim]) * Math.PI + Math.PI * dirMultiplier,
+            frames[Draw.playerAnim] * Math.PI + Math.PI * dirMultiplier,
+            (1.0 + frames[Draw.playerAnim]) * Math.PI + Math.PI * dirMultiplier,
             false);
         ctx.fill();
         ctx.beginPath();
         ctx.arc(x, y, size,
-            (1 - frames[Draw.pacmanAnim]) * Math.PI + Math.PI * dirMultiplier,
-            (1 + (1 - frames[Draw.pacmanAnim])) * Math.PI + Math.PI * dirMultiplier,
+            (1 - frames[Draw.playerAnim]) * Math.PI + Math.PI * dirMultiplier,
+            (1 + (1 - frames[Draw.playerAnim])) * Math.PI + Math.PI * dirMultiplier,
             false);
         ctx.fill();
 
         // Draw player prop (P1=none, P2=backpack, P3=bow, P4=tic-tac pill)
-        Draw.pacmanProp(obj, player.id);
+        Draw.playerProp(obj, player.id);
     }
 
-    private static pacmanDeathAnim(obj: IGameObject, player: PlayerState): void {
+    private static playerDeathAnim(obj: IGameObject, player: PlayerState): void {
         const ctx = gameState.ctx;
         const { x, y, scale, moveDir } = obj;
         const size = scale * unit;
         const p = player.deathProgress;
 
-        // Phase 1 (0 → 0.62): mouth opens progressively wider until Pac-Man vanishes
+        // Phase 1 (0 → 0.62): mouth opens progressively wider until Player vanishes
         const OPEN_END = 0.62;
         if (p < OPEN_END) {
             const t = p / OPEN_END;                    // 0 → 1
             const mouthAngle = t * Math.PI;            // 0 → π (fully open = gone)
-            // Orient mouth in the direction Pac-Man was travelling
+            // Orient mouth in the direction Player was travelling
             let baseAngle = 0;
             if (moveDir === 'left')  baseAngle = Math.PI;
             if (moveDir === 'up')    baseAngle = -Math.PI / 2;
@@ -147,7 +147,7 @@ export class Draw {
 
     // Draw player-specific prop relative to the actor's position and moveDir.
     // P1: no prop. P2: backpack. P3: bow. P4: tic-tac pill.
-    private static pacmanProp(obj: IGameObject, id: number): void {
+    private static playerProp(obj: IGameObject, id: number): void {
         if (id === 1) return;
         const ctx = gameState.ctx;
         const { x, y, scale, moveDir } = obj;
@@ -174,7 +174,7 @@ export class Draw {
             ctx.roundRect(bx, by, pw, ph, size * 0.08);
             ctx.fill();
         } else if (id === 3) {
-            // Miss Pac-Man — purple bow on top of head, rotates with moveDir.
+            // Miss Player — purple bow on top of head, rotates with moveDir.
             // topDx/topDy: direction from pac-center toward bow (left/right keeps world-up).
             // spreadDx/spreadDy: perpendicular (90° CCW from top), lobes fan along this axis.
             let topDx = 0, topDy = -1;
@@ -210,7 +210,7 @@ export class Draw {
             ctx.arc(bcx, bcy, size * 0.18, 0, Math.PI * 2);
             ctx.fill();
         } else if (id === 4) {
-            // Tic-Tac-Toe Pac-Man — # grid drawn on body, rotates with moveDir
+            // Tic-Tac-Toe Player — # grid drawn on body, rotates with moveDir
             const gridHalf = size * 0.55;
             const third    = gridHalf * 0.55;
             const angle = moveDir === 'right' ?  0
@@ -283,41 +283,41 @@ export class Draw {
         }
     }
 
-    static ghost(obj: IGameObject): void {
-        const { color, x, y, scale, ghostMode } = obj;
+    static enemy(obj: IGameObject): void {
+        const { color, x, y, scale, enemyMode } = obj;
 
-        // Hide ghosts while all players are dying (no active non-dying player remains)
+        // Hide enemies while all players are dying (no active non-dying player remains)
         if (gameState.players.length > 0 && gameState.players.every(p => !p.active || p.dying)) return;
 
-        if (ghostMode === 'eyes' || ghostMode === 'entering') {
-            Draw.drawGhostEyes(color, x, y, scale, obj.moveDir);
+        if (enemyMode === 'eyes' || enemyMode === 'entering') {
+            Draw.drawEnemyEyes(color, x, y, scale, obj.moveDir);
             return;
         }
 
-        if (ghostMode === 'frightened') {
+        if (enemyMode === 'frightened') {
             const flashCount = Draw.getFrightenedFlashCount(gameState.level);
             const flashDuration = flashCount * 14 / 60;
             const timeLeft = gameState.frightenedRemaining;
             const isFlashing = flashCount > 0 && timeLeft < flashDuration && timeLeft > 0;
-            let ghostColor = '#0000cc';
+            let enemyColor = '#0000cc';
             if (isFlashing) {
-                ghostColor = Math.floor(Time.frameCount / 7) % 2 === 0 ? '#0000cc' : 'white';
+                enemyColor = Math.floor(Time.frameCount / 7) % 2 === 0 ? '#0000cc' : 'white';
             }
-            Draw.drawGhostBody(ghostColor, x, y, scale);
-            Draw.drawFrightenedEyes(x, y, scale, ghostColor);
+            Draw.drawEnemyBody(enemyColor, x, y, scale);
+            Draw.drawFrightenedEyes(x, y, scale, enemyColor);
             return;
         }
 
-        Draw.drawGhostBody(color, x, y, scale);
-        Draw.drawGhostEyes(color, x, y, scale, obj.moveDir);
+        Draw.drawEnemyBody(color, x, y, scale);
+        Draw.drawEnemyEyes(color, x, y, scale, obj.moveDir);
     }
 
     static drawFrightenedEyes(x: number, y: number, scale: number, bodyColor: string): void {
         const ctx = gameState.ctx;
-        const ghostSize = scale * unit;
-        const eyeOffsetX = ghostSize * 0.3;
-        const eyeOffsetY = ghostSize * 0.15;
-        const eyeRadius  = ghostSize * 0.12;
+        const enemySize = scale * unit;
+        const eyeOffsetX = enemySize * 0.3;
+        const eyeOffsetY = enemySize * 0.15;
+        const eyeRadius  = enemySize * 0.12;
         const dotColor = bodyColor === 'white' ? '#0000cc' : 'white';
         ctx.fillStyle = dotColor;
         for (const side of [-1, 1]) {
@@ -326,10 +326,10 @@ export class Draw {
             ctx.fill();
         }
         // Frowny mouth — center placed below so the arc curves upward (∩ shape)
-        const mouthCenterY = y + ghostSize * 0.5;
-        const mouthR = ghostSize * 0.28;
+        const mouthCenterY = y + enemySize * 0.5;
+        const mouthR = enemySize * 0.28;
         ctx.strokeStyle = dotColor;
-        ctx.lineWidth = Math.max(1, ghostSize * 0.12);
+        ctx.lineWidth = Math.max(1, enemySize * 0.12);
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.arc(x, mouthCenterY, mouthR, Math.PI, 0, false); // left→top→right = frown
@@ -337,9 +337,9 @@ export class Draw {
         ctx.lineCap = 'butt'; // restore default so subsequent strokes (walls) are unaffected
     }
 
-    static drawGhostBody(color: string, x: number, y: number, scale: number): void {
+    static drawEnemyBody(color: string, x: number, y: number, scale: number): void {
         const ctx = gameState.ctx;
-        const ghostSize = scale * unit;
+        const enemySize = scale * unit;
         let curX = x;
         let curY = y;
 
@@ -347,36 +347,36 @@ export class Draw {
         ctx.beginPath();
         ctx.moveTo(curX, curY);
 
-        ctx.arc(curX, curY, ghostSize, Math.PI, 0, false);
+        ctx.arc(curX, curY, enemySize, Math.PI, 0, false);
 
-        curX += ghostSize;
-        curY += ghostSize / 2 + ghostSize / 3;
+        curX += enemySize;
+        curY += enemySize / 2 + enemySize / 3;
         ctx.lineTo(curX, curY);
 
         const numBumps = Math.floor(performance.now() / 400) % 2 === 0 ? 3 : 4;
-        const ghostBump = ghostSize / numBumps;
+        const enemyBump = enemySize / numBumps;
         for (let i = 0; i < numBumps; i++) {
-            curX -= ghostBump;
+            curX -= enemyBump;
             ctx.lineTo(curX, curY);
-            ctx.arc(curX, curY, ghostBump, Math.PI * 2, Math.PI, false);
-            curX -= ghostBump;
+            ctx.arc(curX, curY, enemyBump, Math.PI * 2, Math.PI, false);
+            curX -= enemyBump;
         }
 
         ctx.lineTo(curX, curY);
 
-        curY -= ghostSize / 2 + ghostSize / 3;
+        curY -= enemySize / 2 + enemySize / 3;
         ctx.lineTo(curX, curY);
 
         ctx.fill();
     }
 
-    static drawGhostEyes(_color: string, x: number, y: number, scale: number, dir?: Direction): void {
+    static drawEnemyEyes(_color: string, x: number, y: number, scale: number, dir?: Direction): void {
         const ctx = gameState.ctx;
-        const ghostSize = scale * unit;
-        const eyeOffsetX = ghostSize * 0.42;
-        const eyeOffsetY = ghostSize * 0.1;
-        const eyeRadius  = ghostSize * 0.35;
-        const pupilRadius = ghostSize * 0.15;
+        const enemySize = scale * unit;
+        const eyeOffsetX = enemySize * 0.42;
+        const eyeOffsetY = enemySize * 0.1;
+        const eyeRadius  = enemySize * 0.35;
+        const pupilRadius = enemySize * 0.15;
         // Max pupil travel = eye radius minus pupil radius, damped slightly
         const maxTravel = (eyeRadius - pupilRadius) * 0.65;
 
@@ -547,7 +547,7 @@ export class Draw {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = 'yellow';
-        // Row 20 is the open corridor inside the ghost house enclosure
+        // Row 20 is the open corridor inside the enemy house enclosure
         ctx.fillText('READY!', gameState.canvas.width / 2, 20 * unit + unit / 2);
     }
 
@@ -620,7 +620,7 @@ export class Draw {
                 ctx.fillRect(0, y - unit, w, unit * 2);
             }
 
-            // Pac-Man icons
+            // Player icons
             for (let i = 0; i < count; i++) {
                 const ix = cx - totalSpan / 2 + i * iconSpacing;
                 // P1 (i=0) always has keyboard; others need a specific pad index
@@ -705,7 +705,7 @@ export class Draw {
         if (gameState.debugShowTargetTiles)  Draw.debugTargetTiles(ctx);
         if (gameState.debugShowTargetingViz) Draw.debugTargetingViz(ctx);
         if (gameState.debugShowModes)        Draw.debugModes(ctx);
-        if (gameState.debugShowGhostPaths)   Draw.debugGhostPaths(ctx);
+        if (gameState.debugShowEnemyPaths)   Draw.debugEnemyPaths(ctx);
         if (gameState.debugTilePicker)       Draw.debugTilePickerOverlay(ctx);
     }
 
@@ -756,7 +756,7 @@ export class Draw {
     }
 
     private static debugRedZones(ctx: CanvasRenderingContext2D): void {
-        // The 4 T-junctions where ghosts cannot turn upward in scatter/chase mode.
+        // The 4 T-junctions where enemies cannot turn upward in scatter/chase mode.
         // Green = restriction lifted (frightened), Red = upward blocked (scatter/chase).
         const RED_ZONES = RED_ZONE_TILES;
         const blocked = gameState.frightenedRemaining <= 0;
@@ -829,8 +829,8 @@ export class Draw {
         ctx.restore();
     }
 
-    // BFS from ghost tile to target tile, respecting walls (and door for non-eyes).
-    // Returns array of {x,y} tiles from ghost to target, or [] if unreachable.
+    // BFS from enemy tile to target tile, respecting walls (and door for non-eyes).
+    // Returns array of {x,y} tiles from enemy to target, or [] if unreachable.
     private static bfsPath(
         sx: number, sy: number,
         tx: number, ty: number,
@@ -859,30 +859,30 @@ export class Draw {
         return [];
     }
 
-    private static debugGhostPaths(ctx: CanvasRenderingContext2D): void {
-        // Lane index per ghost — gives each a unique perpendicular offset
+    private static debugEnemyPaths(ctx: CanvasRenderingContext2D): void {
+        // Lane index per enemy — gives each a unique perpendicular offset
         const LANE: Record<string, number> = { red: 0, hotpink: 1, cyan: 2, orange: 3 };
         const LANE_WIDTH = 3.5; // px between lanes
         // Offsets centred around 0: -1.5, -0.5, +0.5, +1.5
         const laneOffset = (color: string) => (LANE[color] ?? 0) * LANE_WIDTH - LANE_WIDTH * 1.5;
 
-        for (const ghost of gameState.ghosts) {
-            const mode = ghost.ghostMode;
+        for (const enemy of gameState.enemies) {
+            const mode = enemy.enemyMode;
             if (!mode || mode === 'house' || mode === 'exiting' || mode === 'frightened') continue;
-            const t = gameState.debugGhostTargets[ghost.color];
+            const t = gameState.debugEnemyTargets[enemy.color];
             if (!t) continue;
 
-            const gx = ghost.roundedX(), gy = ghost.roundedY();
+            const gx = enemy.roundedX(), gy = enemy.roundedY();
             const allowDoor = mode === 'eyes';
             const path = Draw.bfsPath(gx, gy, t.x, t.y, allowDoor);
             if (path.length < 2) continue;
 
-            const off = laneOffset(ghost.color);
+            const off = laneOffset(enemy.color);
 
             ctx.save();
             ctx.globalAlpha = 0.85;
-            ctx.strokeStyle = ghost.color;
-            ctx.fillStyle = ghost.color;
+            ctx.strokeStyle = enemy.color;
+            ctx.fillStyle = enemy.color;
             ctx.lineWidth = 2;
             ctx.setLineDash([4, 3]);
 
@@ -940,15 +940,15 @@ export class Draw {
     }
 
     private static debugTargetTiles(ctx: CanvasRenderingContext2D): void {
-        for (const ghost of gameState.ghosts) {
-            const t = gameState.debugGhostTargets[ghost.color];
+        for (const enemy of gameState.enemies) {
+            const t = gameState.debugEnemyTargets[enemy.color];
             if (!t) continue;
             ctx.save();
             ctx.globalAlpha = 0.35;
-            ctx.fillStyle = ghost.color;
+            ctx.fillStyle = enemy.color;
             ctx.fillRect(t.x * unit, t.y * unit, unit, unit);
             ctx.globalAlpha = 0.9;
-            ctx.strokeStyle = ghost.color;
+            ctx.strokeStyle = enemy.color;
             ctx.lineWidth = 2;
             ctx.strokeRect(t.x * unit + 1, t.y * unit + 1, unit - 2, unit - 2);
             ctx.restore();
@@ -958,15 +958,15 @@ export class Draw {
     private static debugTargetingViz(ctx: CanvasRenderingContext2D): void {
         const tc = (tx: number, ty: number) => ({ x: tx * unit + unit / 2, y: ty * unit + unit / 2 });
 
-        for (const ghost of gameState.ghosts) {
-            const mode = ghost.ghostMode;
+        for (const enemy of gameState.enemies) {
+            const mode = enemy.enemyMode;
             if (!mode || mode === 'house' || mode === 'exiting' || mode === 'frightened') continue;
 
-            const t = gameState.debugGhostTargets[ghost.color];
+            const t = gameState.debugEnemyTargets[enemy.color];
             if (!t) continue;
             const tp = tc(t.x, t.y);
 
-            if (ghost.color === 'cyan' && mode === 'chase') {
+            if (enemy.color === 'cyan' && mode === 'chase') {
                 // Inky: dashed line Blinky→pivot, solid arrow pivot→target
                 const pivot = gameState.debugInkyPivot;
                 if (pivot) {
@@ -992,24 +992,24 @@ export class Draw {
                     ctx.fill();
                     ctx.restore();
                     // doubled vector: pivot → target
-                    Draw.debugArrow(ctx, pp.x, pp.y, tp.x, tp.y, ghost.color);
+                    Draw.debugArrow(ctx, pp.x, pp.y, tp.x, tp.y, enemy.color);
                 }
-            } else if (ghost.color === 'orange' && mode === 'chase') {
+            } else if (enemy.color === 'orange' && mode === 'chase') {
                 // Clyde: 8-tile radius circle + arrow to target
                 const radiusPx = 8 * unit;
                 ctx.save();
                 ctx.globalAlpha = 0.4;
-                ctx.strokeStyle = ghost.color;
+                ctx.strokeStyle = enemy.color;
                 ctx.lineWidth = 1.5;
                 ctx.setLineDash([5, 4]);
                 ctx.beginPath();
-                ctx.arc(ghost.x, ghost.y, radiusPx, 0, Math.PI * 2);
+                ctx.arc(enemy.x, enemy.y, radiusPx, 0, Math.PI * 2);
                 ctx.stroke();
                 ctx.setLineDash([]);
                 ctx.restore();
-                Draw.debugArrow(ctx, ghost.x, ghost.y, tp.x, tp.y, ghost.color);
-            } else if (ghost.color === 'hotpink' && mode === 'chase') {
-                // Pinky: dashed arrow Pac-Man→4-ahead, then arrow 4-ahead→target
+                Draw.debugArrow(ctx, enemy.x, enemy.y, tp.x, tp.y, enemy.color);
+            } else if (enemy.color === 'hotpink' && mode === 'chase') {
+                // Pinky: dashed arrow Player→4-ahead, then arrow 4-ahead→target
                 const ahead = gameState.debugPinkyAhead;
                 if (ahead) {
                     const ap = tc(ahead.x, ahead.y);
@@ -1017,7 +1017,7 @@ export class Draw {
                     if (pm) {
                         ctx.save();
                         ctx.globalAlpha = 0.5;
-                        ctx.strokeStyle = ghost.color;
+                        ctx.strokeStyle = enemy.color;
                         ctx.lineWidth = 1.5;
                         ctx.setLineDash([4, 4]);
                         ctx.beginPath();
@@ -1028,10 +1028,10 @@ export class Draw {
                         ctx.restore();
                     }
                 }
-                Draw.debugArrow(ctx, ghost.x, ghost.y, tp.x, tp.y, ghost.color);
+                Draw.debugArrow(ctx, enemy.x, enemy.y, tp.x, tp.y, enemy.color);
             } else {
-                // Blinky (chase/scatter) and eyes: simple arrow ghost→target
-                Draw.debugArrow(ctx, ghost.x, ghost.y, tp.x, tp.y, ghost.color);
+                // Blinky (chase/scatter) and eyes: simple arrow enemy→target
+                Draw.debugArrow(ctx, enemy.x, enemy.y, tp.x, tp.y, enemy.color);
             }
         }
     }
@@ -1057,19 +1057,19 @@ export class Draw {
         ctx.fillText(globalMode, gameState.canvas.width / 2, 44);
         ctx.restore();
 
-        // Per-ghost mode badges above each ghost
+        // Per-enemy mode badges above each enemy
         ctx.font = 'bold 9px monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
-        for (const ghost of gameState.ghosts) {
-            const label = modeLabel[ghost.ghostMode ?? ''] ?? (ghost.ghostMode ?? '');
-            const badgeY = ghost.y - ghost.scale * unit * 0.75;
+        for (const enemy of gameState.enemies) {
+            const label = modeLabel[enemy.enemyMode ?? ''] ?? (enemy.enemyMode ?? '');
+            const badgeY = enemy.y - enemy.scale * unit * 0.75;
             ctx.save();
             const tw = ctx.measureText(label).width;
             ctx.fillStyle = 'rgba(0,0,0,0.75)';
-            ctx.fillRect(ghost.x - tw / 2 - 3, badgeY - 11, tw + 6, 11);
-            ctx.fillStyle = ghost.color;
-            ctx.fillText(label, ghost.x, badgeY);
+            ctx.fillRect(enemy.x - tw / 2 - 3, badgeY - 11, tw + 6, 11);
+            ctx.fillStyle = enemy.color;
+            ctx.fillText(label, enemy.x, badgeY);
             ctx.restore();
         }
     }

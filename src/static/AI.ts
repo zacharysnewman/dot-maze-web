@@ -9,10 +9,10 @@ interface TurnOption {
     y: number;
 }
 
-// Red-zone T-intersections: ghosts in scatter/chase cannot turn upward here.
-// Two pairs flank the ghost house: (12,14)+(15,14) above, (12,26)+(15,26) below.
+// Red-zone T-intersections: enemies in scatter/chase cannot turn upward here.
+// Two pairs flank the enemy house: (12,14)+(15,14) above, (12,26)+(15,26) below.
 
-// Scatter corner targets by ghost color
+// Scatter corner targets by enemy color
 const SCATTER_TARGETS: Record<string, { x: number; y: number }> = {
     'red':     { x: 26, y: 0  },  // Blinky — top-right
     'hotpink': { x: 2,  y: 0  },  // Pinky — top-left
@@ -20,7 +20,7 @@ const SCATTER_TARGETS: Record<string, { x: number; y: number }> = {
     'orange':  { x: 0,  y: 34 },  // Clyde — bottom-left
 };
 
-// Ghost house return tile — eyes navigate here to revive
+// Enemy house return tile — eyes navigate here to revive
 const EYES_TARGET = { x: 13, y: 14 };
 
 export class AI {
@@ -60,14 +60,14 @@ export class AI {
         return AI.modePatterns[idx][col];
     }
 
-    static ghostTileCenter(obj: IGameObject): void {
+    static enemyTileCenter(obj: IGameObject): void {
         if (gameState.frozen) return;
 
-        const mode = obj.ghostMode ?? AI.getCurrentGlobalMode();
+        const mode = obj.enemyMode ?? AI.getCurrentGlobalMode();
         if (mode === 'house' || mode === 'entering' || mode === 'exiting') return;
 
         if (mode === 'frightened') {
-            AI.ghostFrightenedMove(obj);
+            AI.enemyFrightenedMove(obj);
             return;
         }
 
@@ -97,43 +97,43 @@ export class AI {
                 targetY = corner.y;
             }
         } else {
-            // chase — per-ghost authentic targeting against nearest active player
-            const pacman = AI.nearestPlayer(obj);
-            if (!pacman) return; // no active players — skip
+            // chase — per-enemy authentic targeting against nearest active player
+            const player = AI.nearestPlayer(obj);
+            if (!player) return; // no active players — skip
             if (obj.color === 'hotpink') {
                 // Pinky: 4 tiles ahead of nearest player (with up overflow bug)
-                const ahead = AI.tilesAheadOf(pacman, 4);
+                const ahead = AI.tilesAheadOf(player, 4);
                 targetX = ahead.x;
                 targetY = ahead.y;
                 if (gameState.debugEnabled) gameState.debugPinkyAhead = ahead;
             } else if (obj.color === 'cyan') {
                 // Inky: doubled vector from Blinky through 2 tiles ahead of nearest player
-                const intermediate = AI.tilesAheadOf(pacman, 2);
+                const intermediate = AI.tilesAheadOf(player, 2);
                 const blinky = gameState.blinky;
                 targetX = 2 * intermediate.x - blinky.roundedX();
                 targetY = 2 * intermediate.y - blinky.roundedY();
                 if (gameState.debugEnabled) gameState.debugInkyPivot = intermediate;
             } else if (obj.color === 'orange') {
                 // Clyde: target nearest player if ≥8 tiles away, else retreat to corner
-                const dist = getDistance(obj.roundedX(), obj.roundedY(), pacman.roundedX(), pacman.roundedY());
-                if (gameState.debugEnabled) gameState.debugClydeDistToPacman = dist;
+                const dist = getDistance(obj.roundedX(), obj.roundedY(), player.roundedX(), player.roundedY());
+                if (gameState.debugEnabled) gameState.debugClydeDistToPlayer = dist;
                 if (dist >= 8) {
-                    targetX = pacman.roundedX();
-                    targetY = pacman.roundedY();
+                    targetX = player.roundedX();
+                    targetY = player.roundedY();
                 } else {
                     targetX = 0;
                     targetY = 34;
                 }
             } else {
                 // Blinky: direct pursuit of nearest player's tile
-                targetX = pacman.roundedX();
-                targetY = pacman.roundedY();
+                targetX = player.roundedX();
+                targetY = player.roundedY();
             }
         }
 
-        if (gameState.debugEnabled) gameState.debugGhostTargets[obj.color] = { x: targetX, y: targetY };
+        if (gameState.debugEnabled) gameState.debugEnemyTargets[obj.color] = { x: targetX, y: targetY };
 
-        // Treat undefined (off-grid) as passable on the tunnel row so ghosts can wrap
+        // Treat undefined (off-grid) as passable on the tunnel row so enemies can wrap
         const onTunnelRow = myY === TUNNEL_ROW;
         const inRedZone = (mode === 'scatter' || mode === 'chase') && RED_ZONE.has(`${myX},${myY}`);
         const canMoveLeft  = ((obj.leftObject()  ?? 0) > 2 || (onTunnelRow && obj.leftObject()  === undefined)) && obj.moveDir !== 'right';
@@ -163,13 +163,13 @@ export class AI {
         obj.moveDir = bestDir;
     }
 
-    // Returns the nearest active player's actor to the given ghost, or null if none.
-    static nearestPlayer(ghost: IGameObject): IGameObject | null {
+    // Returns the nearest active player's actor to the given enemy, or null if none.
+    static nearestPlayer(enemy: IGameObject): IGameObject | null {
         let nearest: IGameObject | null = null;
         let minDist = Infinity;
         for (const player of gameState.players) {
             if (!player.active || player.dying) continue;
-            const d = getDistance(ghost.roundedX(), ghost.roundedY(), player.actor.roundedX(), player.actor.roundedY());
+            const d = getDistance(enemy.roundedX(), enemy.roundedY(), player.actor.roundedX(), player.actor.roundedY());
             if (d < minDist) { minDist = d; nearest = player.actor; }
         }
         return nearest;
@@ -189,8 +189,8 @@ export class AI {
         }
     }
 
-    // PRNG-based random direction selection for frightened ghosts
-    static ghostFrightenedMove(obj: IGameObject): void {
+    // PRNG-based random direction selection for frightened enemies
+    static enemyFrightenedMove(obj: IGameObject): void {
         const allDirs: Direction[] = ['up', 'left', 'down', 'right'];
         const onTunnelRow = obj.roundedY() === TUNNEL_ROW;
         const canMove: Record<Direction, boolean> = {

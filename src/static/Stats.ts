@@ -1,6 +1,6 @@
 import { gameState } from '../game-state';
 
-const LS_KEY = 'pacman-scores';
+const LS_KEY = 'player-scores';
 
 export interface HighScoreEntry {
     initials: string;

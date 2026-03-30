@@ -1,4 +1,4 @@
-// Web Audio API sound synthesis for Pac-Man game events.
+// Web Audio API sound synthesis for dot-maze game events.
 // AudioContext is created on first call to init() which must be triggered
 // by a user gesture (key press or touch) to satisfy browser autoplay policy.
 
@@ -100,14 +100,14 @@ export class Sound {
         Sound.tone(554, 0.20, 0.05, 'sine', 0.12);
     }
 
-    // Ascending arpeggio when a ghost is eaten
-    static ghostEaten(): void {
+    // Ascending arpeggio when an enemy is eaten
+    static enemyEaten(): void {
         [392, 494, 587, 784].forEach((freq, i) => {
             Sound.tone(freq, 0.08, i * 0.07, 'square', 0.14);
         });
     }
 
-    // Descending "death" melody when Pac-Man dies
+    // Descending "death" melody when the Player dies
     static death(): void {
         [480, 420, 360, 300, 240, 180].forEach((freq, i) => {
             Sound.tone(freq, 0.13, i * 0.10, 'square', 0.15);
@@ -145,8 +145,8 @@ export class Sound {
 
     // ── Continuous ambient siren ───────────────────────────────────────────────
     // Three states:
-    //   'normal' — ghosts active, no power pellet: medium pitch, slow woo-woo
-    //   'eyes'   — ghost eaten, eyes returning:    high pitch,   faster woo-woo
+    //   'normal' — enemies active, no power pellet: medium pitch, slow woo-woo
+    //   'eyes'   — enemy eaten, eyes returning:    high pitch,   faster woo-woo
     //   'blue'   — power pellet active (frightened): low pitch,  fastest woo-woo
 
     private static sirenOsc:   OscillatorNode | null = null;

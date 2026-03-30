@@ -4,7 +4,7 @@ export type Direction = 'left' | 'right' | 'up' | 'down';
 
 export type TileValue = 0 | 2 | 3 | 4 | 5;
 
-export type GhostMode = 'scatter' | 'chase' | 'frightened' | 'eyes' | 'entering' | 'house' | 'exiting';
+export type EnemyMode = 'scatter' | 'chase' | 'frightened' | 'eyes' | 'entering' | 'house' | 'exiting';
 
 export interface PlayerState {
     id: number;
@@ -23,7 +23,7 @@ export interface IGameObject {
     scale: number;
     moveSpeed: number;
     moveDir: Direction;
-    ghostMode?: GhostMode;
+    enemyMode?: EnemyMode;
     pendingReverse?: boolean;
     update(): void;
     roundedX(): number;

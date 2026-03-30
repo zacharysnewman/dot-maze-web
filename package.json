@@ -1,5 +1,5 @@
 {
-  "name": "pacman-ts",
+  "name": "dot-maze-web",
   "version": "1.0.0",
   "scripts": {
     "build": "tsc --noEmit && node build.js",

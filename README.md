@@ -1,10 +1,10 @@
 # Dot Muncher Web
 
-A web-based Pac-Man clone written in TypeScript. The maze, characters, and all visuals are drawn entirely with Canvas 2D stroke/fill calls — no sprites or images. Gameplay faithfully reproduces the original arcade, including authentic ghost AI, speed tables, scatter/chase timing, the ghost house release system, Cruise Elroy, and frightened mode.
+A web-based dot-maze game written in TypeScript. The maze, characters, and all visuals are drawn entirely with Canvas 2D stroke/fill calls — no sprites or images. Gameplay faithfully reproduces classic arcade dot-maze mechanics, including authentic enemy AI, speed tables, scatter/chase timing, the enemy house release system, Cruise Elroy, and frightened mode.
 
 ## Features
 
-- Authentic single-player Pac-Man (based on *The Pac-Man Dossier* by Jamey Pittman)
+- Authentic single-player dot-maze gameplay
 - **1–4 player co-op** — shared life pool, simultaneous play, players sit out on death and revive on level clear
 - Keyboard, touch/swipe, and gamepad input — P1 accepts all three simultaneously
 - All graphics procedurally drawn on canvas (no image assets)
@@ -39,12 +39,9 @@ src/
   input/             # PlayerInput, Keyboard, Touch, Gamepad, Composite
   object/            # GameObject base class
   static/            # Draw, Move, AI, Sound, Stats, Time
-docs/                # Pac-Man Dossier reference chapters + implementation status
 MAP-EDITOR.md        # planned level editor spec
 ```
 
 ## Documentation
 
-- `docs/IMPLEMENTATION-STATUS.md` — feature-by-feature implementation checklist
-- `docs/INDEX.md` — Pac-Man Dossier chapter index and quick-reference tables
 - `MAP-EDITOR.md` — level editor implementation plan

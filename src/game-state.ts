@@ -10,7 +10,7 @@ export const gameState = {
     pinky: null as unknown as IGameObject,
     clyde: null as unknown as IGameObject,
     gameObjects: [] as IGameObject[],
-    ghosts: [] as IGameObject[],
+    enemies: [] as IGameObject[],
     frozen: false,
     gameOver: false,
     level: 1,
@@ -19,9 +19,9 @@ export const gameState = {
     scatterChaseElapsed: 0,
     // Frightened mode state (Phase 4)
     frightenedRemaining: 0,
-    ghostEatenChain: 0,
+    enemyEatenChain: 0,
     scorePopups: [] as Array<{ x: number; y: number; score: number; endTime: number }>,
-    // Ghost house state (Phase 3)
+    // Enemy house state (Phase 3)
     useGlobalDotCounter: false,
     globalDotCounter: 0,
     personalDotCounters: {} as Record<string, number>,
@@ -35,7 +35,7 @@ export const gameState = {
     fruitHistory: [] as number[],
     // Cruise Elroy state (Phase 8)
     elroyLevel: 0 as 0 | 1 | 2,   // 0 = inactive, 1 = Elroy 1, 2 = Elroy 2
-    elroySuspended: false,          // true after Pac-Man death; clears when Clyde exits house
+    elroySuspended: false,          // true after Player death; clears when Clyde exits house
     // Ready state (Phase 10)
     showReady: false,
     // Debug overlay (enabled via ?dev=true)
@@ -43,12 +43,12 @@ export const gameState = {
     debugShowTargetTiles: false,
     debugShowTargetingViz: false,
     debugShowModes: false,
-    debugGhostTargets: {} as Record<string, { x: number; y: number } | null>,
+    debugEnemyTargets: {} as Record<string, { x: number; y: number } | null>,
     debugInkyPivot: null as { x: number; y: number } | null,
     debugPinkyAhead: null as { x: number; y: number } | null,
-    debugClydeDistToPacman: 0,
+    debugClydeDistToPlayer: 0,
     debugShowRedZones: false,
-    debugShowGhostPaths: false,
+    debugShowEnemyPaths: false,
     debugTilePicker: false,
     debugSelectedTile: null as { x: number; y: number } | null,
 };

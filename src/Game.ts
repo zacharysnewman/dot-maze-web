@@ -21,19 +21,19 @@ import { CompositePlayerInput } from './input/CompositePlayerInput';
 
 // Starting tile positions for each actor
 const START = {
-    pacman: { x: 13.5, y: 26 },
+    player: { x: 13.5, y: 26 },
     blinky: { x: 13.5, y: 14 },
     inky:   { x: 12,   y: 17 },
     pinky:  { x: 13.5, y: 17 },
     clyde:  { x: 15,   y: 17 },
 };
 
-// Ghost eye-return speed (constant regardless of level)
+// Enemy eye-return speed (constant regardless of level)
 const SPEED_EYES = 1.5;
 
 // ── Fruit (Phase 7) ───────────────────────────────────────────────────────────
 
-// Fruit spawns below the ghost house at tile (13, 20)
+// Fruit spawns below the enemy house at tile (13, 20)
 const FRUIT_X = 13 * unit + unit / 2;
 const FRUIT_Y = 20 * unit + unit / 2;
 const FRUIT_DURATION = 9.5; // seconds
@@ -76,33 +76,33 @@ function checkFruitCollision(): void {
 // ── Speed Table (Phase 6) ─────────────────────────────────────────────────────
 // All values are fractions of max speed (1.0 = 100%)
 
-function getPacmanNormalSpeed(level: number): number {
+function getPlayerNormalSpeed(level: number): number {
     if (level === 1) return 0.80;
     if (level <= 4)  return 0.90;
     if (level <= 20) return 1.00;
     return 0.90; // level 21+
 }
 
-function getPacmanFrightSpeed(level: number): number {
+function getPlayerFrightSpeed(level: number): number {
     if (level === 1) return 0.90;
     if (level <= 4)  return 0.95;
     if (level <= 20) return 1.00;
     return 0.90; // level 21+ — no boost (same as normal)
 }
 
-function getGhostNormalSpeed(level: number): number {
+function getEnemyNormalSpeed(level: number): number {
     if (level === 1) return 0.75;
     if (level <= 4)  return 0.85;
     return 0.95; // level 5+
 }
 
-function getGhostFrightSpeed(level: number): number {
+function getEnemyFrightSpeed(level: number): number {
     if (level === 1) return 0.50;
     if (level <= 4)  return 0.55;
     return 0.60; // level 5+
 }
 
-function getGhostTunnelSpeed(level: number): number {
+function getEnemyTunnelSpeed(level: number): number {
     if (level === 1) return 0.40;
     if (level <= 4)  return 0.45;
     return 0.50; // level 5+
@@ -161,44 +161,44 @@ function updateElroy(): void {
     }
 }
 
-// Returns the speed Pac-Man should be moving at right now (used after a dot pause)
-function getCurrentPacmanSpeed(): number {
-    const anyFrightened = gameState.ghosts.some(g => g.ghostMode === 'frightened');
+// Returns the speed the Player should be moving at right now (used after a dot pause)
+function getCurrentPlayerSpeed(): number {
+    const anyFrightened = gameState.enemies.some(g => g.enemyMode === 'frightened');
     return anyFrightened
-        ? getPacmanFrightSpeed(gameState.level)
-        : getPacmanNormalSpeed(gameState.level);
+        ? getPlayerFrightSpeed(gameState.level)
+        : getPlayerNormalSpeed(gameState.level);
 }
 
-function isGhostInTunnel(ghost: IGameObject): boolean {
-    if (ghost.roundedY() !== TUNNEL_ROW) return false;
-    const col = ghost.roundedX();
+function isEnemyInTunnel(enemy: IGameObject): boolean {
+    if (enemy.roundedY() !== TUNNEL_ROW) return false;
+    const col = enemy.roundedX();
     return col <= TUNNEL_SLOW_COL_MAX || col >= TUNNEL_SLOW_COL_MIN;
 }
 
-// Apply correct speed to all active ghosts based on their current mode and position
-function updateGhostTunnelSpeeds(): void {
+// Apply correct speed to all active enemies based on their current mode and position
+function updateEnemyTunnelSpeeds(): void {
     if (gameState.frozen || gameState.gameOver) return;
-    for (const ghost of gameState.ghosts) {
+    for (const enemy of gameState.enemies) {
         // Modes managed outside this function
-        if (ghost.ghostMode === 'eyes' || ghost.ghostMode === 'entering' ||
-            ghost.ghostMode === 'house' || ghost.ghostMode === 'exiting') continue;
+        if (enemy.enemyMode === 'eyes' || enemy.enemyMode === 'entering' ||
+            enemy.enemyMode === 'house' || enemy.enemyMode === 'exiting') continue;
 
-        if (isGhostInTunnel(ghost)) {
-            ghost.moveSpeed = getGhostTunnelSpeed(gameState.level);
-        } else if (ghost.ghostMode === 'frightened') {
-            ghost.moveSpeed = getGhostFrightSpeed(gameState.level);
-        } else if (ghost.color === 'red' && gameState.elroyLevel > 0) {
+        if (isEnemyInTunnel(enemy)) {
+            enemy.moveSpeed = getEnemyTunnelSpeed(gameState.level);
+        } else if (enemy.enemyMode === 'frightened') {
+            enemy.moveSpeed = getEnemyFrightSpeed(gameState.level);
+        } else if (enemy.color === 'red' && gameState.elroyLevel > 0) {
             // Cruise Elroy: Blinky gets a speed boost in chase/scatter mode
-            ghost.moveSpeed = gameState.elroyLevel === 2
+            enemy.moveSpeed = gameState.elroyLevel === 2
                 ? getElroySpeed2(gameState.level)
                 : getElroySpeed1(gameState.level);
         } else {
-            ghost.moveSpeed = getGhostNormalSpeed(gameState.level);
+            enemy.moveSpeed = getEnemyNormalSpeed(gameState.level);
         }
     }
 }
 
-// Personal dot-counter limits per ghost color and level group (Phase 3)
+// Personal dot-counter limits per enemy color and level group (Phase 3)
 function getPersonalLimit(color: string, level: number): number {
     if (color === 'hotpink') return 0;
     if (color === 'cyan')    return level === 1 ? 30 : 0;
@@ -227,14 +227,14 @@ function getFrightenedDuration(level: number): number {
     return Draw.getFrightenedDuration(level);
 }
 
-// Returns true if ghost can physically move in dir from its current rounded tile
-function canGhostMoveDir(ghost: IGameObject, dir: Direction): boolean {
-    const onTunnelRow = ghost.roundedY() === TUNNEL_ROW;
+// Returns true if enemy can physically move in dir from its current rounded tile
+function canEnemyMoveDir(enemy: IGameObject, dir: Direction): boolean {
+    const onTunnelRow = enemy.roundedY() === TUNNEL_ROW;
     switch (dir) {
-        case 'left':  return (ghost.leftObject()   ?? 0) > 2 || (onTunnelRow && ghost.leftObject()  === undefined);
-        case 'right': return (ghost.rightObject()  ?? 0) > 2 || (onTunnelRow && ghost.rightObject() === undefined);
-        case 'up':    return (ghost.topObject()    ?? 0) > 2;
-        case 'down':  return (ghost.bottomObject() ?? 0) > 2;
+        case 'left':  return (enemy.leftObject()   ?? 0) > 2 || (onTunnelRow && enemy.leftObject()  === undefined);
+        case 'right': return (enemy.rightObject()  ?? 0) > 2 || (onTunnelRow && enemy.rightObject() === undefined);
+        case 'up':    return (enemy.topObject()    ?? 0) > 2;
+        case 'down':  return (enemy.bottomObject() ?? 0) > 2;
     }
 }
 
@@ -243,19 +243,19 @@ function canGhostMoveDir(ghost: IGameObject, dir: Direction): boolean {
 function resetScatterChaseTimer(): void {
     gameState.scatterChaseIndex = 0;
     gameState.scatterChaseElapsed = 0;
-    for (const ghost of gameState.ghosts) {
-        if (ghost.ghostMode !== 'frightened' && ghost.ghostMode !== 'eyes' &&
-            ghost.ghostMode !== 'entering' && ghost.ghostMode !== 'house' &&
-            ghost.ghostMode !== 'exiting') {
-            ghost.ghostMode = 'scatter';
+    for (const enemy of gameState.enemies) {
+        if (enemy.enemyMode !== 'frightened' && enemy.enemyMode !== 'eyes' &&
+            enemy.enemyMode !== 'entering' && enemy.enemyMode !== 'house' &&
+            enemy.enemyMode !== 'exiting') {
+            enemy.enemyMode = 'scatter';
         }
     }
 }
 
 function updateScatterChaseMode(dt: number): void {
     if (gameState.frozen || gameState.gameOver) return;
-    // Pause timer while any ghost is frightened (Phase 4 requirement)
-    if (gameState.ghosts.some(g => g.ghostMode === 'frightened')) return;
+    // Pause timer while any enemy is frightened (Phase 4 requirement)
+    if (gameState.enemies.some(g => g.enemyMode === 'frightened')) return;
 
     const duration = AI.getCurrentPhaseDuration();
     if (duration < 0) return; // indefinite phase
@@ -268,15 +268,15 @@ function updateScatterChaseMode(dt: number): void {
             gameState.scatterChaseIndex++;
         }
         const newMode = AI.getCurrentGlobalMode();
-        for (const ghost of gameState.ghosts) {
-            if (ghost.ghostMode === 'house') {
+        for (const enemy of gameState.enemies) {
+            if (enemy.enemyMode === 'house') {
                 // Track mode change so exit direction flips to right
-                gameState.modeChangesInHouse[ghost.color] =
-                    (gameState.modeChangesInHouse[ghost.color] ?? 0) + 1;
-            } else if (ghost.ghostMode !== 'frightened' && ghost.ghostMode !== 'eyes' &&
-                       ghost.ghostMode !== 'entering' && ghost.ghostMode !== 'exiting') {
-                ghost.ghostMode = newMode;
-                reverseGhost(ghost);
+                gameState.modeChangesInHouse[enemy.color] =
+                    (gameState.modeChangesInHouse[enemy.color] ?? 0) + 1;
+            } else if (enemy.enemyMode !== 'frightened' && enemy.enemyMode !== 'eyes' &&
+                       enemy.enemyMode !== 'entering' && enemy.enemyMode !== 'exiting') {
+                enemy.enemyMode = newMode;
+                reverseEnemy(enemy);
             }
         }
     }
@@ -284,22 +284,22 @@ function updateScatterChaseMode(dt: number): void {
 
 // ── Frightened Mode ───────────────────────────────────────────────────────────
 
-// Reverse a ghost's direction; if the reversed direction is into a wall, keep current
-function reverseGhost(ghost: IGameObject): void {
-    const rev = oppositeDir(ghost.moveDir);
-    if (canGhostMoveDir(ghost, rev)) ghost.moveDir = rev;
+// Reverse an enemy's direction; if the reversed direction is into a wall, keep current
+function reverseEnemy(enemy: IGameObject): void {
+    const rev = oppositeDir(enemy.moveDir);
+    if (canEnemyMoveDir(enemy, rev)) enemy.moveDir = rev;
 }
 
 function activateFrightened(): void {
     const duration = getFrightenedDuration(gameState.level);
-    gameState.ghostEatenChain = 0;
+    gameState.enemyEatenChain = 0;
 
     if (duration <= 0) {
-        // Zero duration: reverse ghosts but don't turn them blue
-        for (const ghost of gameState.ghosts) {
-            if (ghost.ghostMode !== 'eyes' && ghost.ghostMode !== 'entering' &&
-                ghost.ghostMode !== 'house' && ghost.ghostMode !== 'exiting') {
-                reverseGhost(ghost);
+        // Zero duration: reverse enemies but don't turn them blue
+        for (const enemy of gameState.enemies) {
+            if (enemy.enemyMode !== 'eyes' && enemy.enemyMode !== 'entering' &&
+                enemy.enemyMode !== 'house' && enemy.enemyMode !== 'exiting') {
+                reverseEnemy(enemy);
             }
         }
         return;
@@ -307,19 +307,19 @@ function activateFrightened(): void {
 
     // Reset countdown (use game-time delta so pauses don't eat into it)
     gameState.frightenedRemaining = duration;
-    for (const ghost of gameState.ghosts) {
-        if (ghost.ghostMode !== 'eyes' && ghost.ghostMode !== 'entering' &&
-            ghost.ghostMode !== 'house' && ghost.ghostMode !== 'exiting') {
-            ghost.ghostMode = 'frightened';
-            reverseGhost(ghost);
-            ghost.moveSpeed = getGhostFrightSpeed(gameState.level);
+    for (const enemy of gameState.enemies) {
+        if (enemy.enemyMode !== 'eyes' && enemy.enemyMode !== 'entering' &&
+            enemy.enemyMode !== 'house' && enemy.enemyMode !== 'exiting') {
+            enemy.enemyMode = 'frightened';
+            reverseEnemy(enemy);
+            enemy.moveSpeed = getEnemyFrightSpeed(gameState.level);
         }
     }
 }
 
 function updateFrightenedMode(dt: number): void {
     if (gameState.frightenedRemaining <= 0) return;
-    // Pause the countdown during ghost-eating freeze so those pauses don't
+    // Pause the countdown during enemy-eating freeze so those pauses don't
     // consume vulnerability time (matches original arcade behavior)
     if (!gameState.players.some(p => p.frozen)) {
         gameState.frightenedRemaining -= dt;
@@ -328,30 +328,30 @@ function updateFrightenedMode(dt: number): void {
 
     gameState.frightenedRemaining = 0;
     const globalMode = AI.getCurrentGlobalMode();
-    for (const ghost of gameState.ghosts) {
-        if (ghost.ghostMode === 'frightened') {
-            ghost.ghostMode = globalMode;
-            // Speed will be corrected by updateGhostTunnelSpeeds() this same frame
+    for (const enemy of gameState.enemies) {
+        if (enemy.enemyMode === 'frightened') {
+            enemy.enemyMode = globalMode;
+            // Speed will be corrected by updateEnemyTunnelSpeeds() this same frame
         }
     }
-    // Restore Pac-Man speed if not currently paused for a dot
+    // Restore Player speed if not currently paused for a dot
     for (const player of gameState.players) {
         if (player.actor.moveSpeed !== 0) {
-            player.actor.moveSpeed = getPacmanNormalSpeed(gameState.level);
+            player.actor.moveSpeed = getPlayerNormalSpeed(gameState.level);
         }
     }
 }
 
-function eatGhost(ghost: IGameObject, player: PlayerState): void {
+function eatEnemy(enemy: IGameObject, player: PlayerState): void {
     const scores = [200, 400, 800, 1600];
-    const score = scores[Math.min(gameState.ghostEatenChain, 3)];
-    gameState.ghostEatenChain++;
+    const score = scores[Math.min(gameState.enemyEatenChain, 3)];
+    gameState.enemyEatenChain++;
     Stats.addToScore(score);
 
     // Show score popup at the capture location
     gameState.scorePopups.push({
-        x: ghost.x,
-        y: ghost.y,
+        x: enemy.x,
+        y: enemy.y,
         score,
         endTime: Time.timeSinceStart + 1.0,
     });
@@ -360,42 +360,42 @@ function eatGhost(ghost: IGameObject, player: PlayerState): void {
     player.frozen = true;
     Time.addTimer(0.5, () => { player.frozen = false; });
 
-    Sound.ghostEaten();
+    Sound.enemyEaten();
 
-    // Ghost becomes eyes and speeds home
-    ghost.ghostMode = 'eyes';
-    ghost.moveSpeed = SPEED_EYES;
+    // Enemy becomes eyes and speeds home
+    enemy.enemyMode = 'eyes';
+    enemy.moveSpeed = SPEED_EYES;
 }
 
-// ── Ghost House Release (Phase 3) ─────────────────────────────────────────────
+// ── Enemy House Release (Phase 3) ──────────────────────────────────────────────
 
-function releaseGhost(ghost: IGameObject): void {
-    ghost.ghostMode = 'exiting';
-    ghost.moveSpeed = getGhostNormalSpeed(gameState.level);
-    // Cruise Elroy resumes once Clyde begins exiting the ghost house
-    if (ghost.color === 'orange' && gameState.elroySuspended) {
+function releaseEnemy(enemy: IGameObject): void {
+    enemy.enemyMode = 'exiting';
+    enemy.moveSpeed = getEnemyNormalSpeed(gameState.level);
+    // Cruise Elroy resumes once Clyde begins exiting the enemy house
+    if (enemy.color === 'orange' && gameState.elroySuspended) {
         gameState.elroySuspended = false;
     }
 }
 
-function getNextHouseGhost(): IGameObject | null {
-    for (const ghost of [gameState.pinky, gameState.inky, gameState.clyde]) {
-        if (ghost.ghostMode === 'house') return ghost;
+function getNextHouseEnemy(): IGameObject | null {
+    for (const enemy of [gameState.pinky, gameState.inky, gameState.clyde]) {
+        if (enemy.enemyMode === 'house') return enemy;
     }
     return null;
 }
 
-// Release all house ghosts whose personal counter has reached their limit (cascading)
-function checkAndReleaseHouseGhosts(): void {
+// Release all house enemies whose personal counter has reached their limit (cascading)
+function checkAndReleaseHouseEnemies(): void {
     if (gameState.useGlobalDotCounter) return; // global counter handles its own releases
-    for (const ghost of [gameState.pinky, gameState.inky, gameState.clyde]) {
-        if (ghost.ghostMode !== 'house') continue;
-        const limit = getPersonalLimit(ghost.color, gameState.level);
-        if (gameState.personalDotCounters[ghost.color] >= limit) {
-            releaseGhost(ghost);
-            // Don't break — next iteration picks up the newly-active ghost
+    for (const enemy of [gameState.pinky, gameState.inky, gameState.clyde]) {
+        if (enemy.enemyMode !== 'house') continue;
+        const limit = getPersonalLimit(enemy.color, gameState.level);
+        if (gameState.personalDotCounters[enemy.color] >= limit) {
+            releaseEnemy(enemy);
+            // Don't break — next iteration picks up the newly-active enemy
         } else {
-            break; // This ghost's counter is active and not yet at limit
+            break; // This enemy's counter is active and not yet at limit
         }
     }
 }
@@ -417,57 +417,57 @@ function incrementDotCounters(): void {
     if (gameState.useGlobalDotCounter) {
         gameState.globalDotCounter++;
         const gc = gameState.globalDotCounter;
-        if (gc >= GLOBAL_THRESHOLDS['hotpink'] && gameState.pinky.ghostMode === 'house') {
-            releaseGhost(gameState.pinky);
+        if (gc >= GLOBAL_THRESHOLDS['hotpink'] && gameState.pinky.enemyMode === 'house') {
+            releaseEnemy(gameState.pinky);
         }
-        if (gc >= GLOBAL_THRESHOLDS['cyan'] && gameState.inky.ghostMode === 'house') {
-            releaseGhost(gameState.inky);
+        if (gc >= GLOBAL_THRESHOLDS['cyan'] && gameState.inky.enemyMode === 'house') {
+            releaseEnemy(gameState.inky);
         }
-        if (gc >= GLOBAL_THRESHOLDS['orange'] && gameState.clyde.ghostMode === 'house') {
-            releaseGhost(gameState.clyde);
+        if (gc >= GLOBAL_THRESHOLDS['orange'] && gameState.clyde.enemyMode === 'house') {
+            releaseEnemy(gameState.clyde);
             gameState.useGlobalDotCounter = false; // deactivate (Clyde was inside at 32)
         }
-        // If Clyde was already outside at 32, the counter keeps running (stuck-ghost exploit)
+        // If Clyde was already outside at 32, the counter keeps running (stuck-enemy exploit)
     } else {
-        // Increment only the active ghost's personal counter (first one still in house)
-        for (const ghost of [gameState.pinky, gameState.inky, gameState.clyde]) {
-            if (ghost.ghostMode === 'house') {
-                gameState.personalDotCounters[ghost.color]++;
+        // Increment only the active enemy's personal counter (first one still in house)
+        for (const enemy of [gameState.pinky, gameState.inky, gameState.clyde]) {
+            if (enemy.enemyMode === 'house') {
+                gameState.personalDotCounters[enemy.color]++;
                 break;
             }
         }
-        checkAndReleaseHouseGhosts();
+        checkAndReleaseHouseEnemies();
     }
 }
 
 function updateIdleTimer(dt: number): void {
-    const hasHouseGhost = [gameState.pinky, gameState.inky, gameState.clyde]
-        .some(g => g.ghostMode === 'house');
-    if (!hasHouseGhost) { gameState.idleTimer = 0; return; }
+    const hasHouseEnemy = [gameState.pinky, gameState.inky, gameState.clyde]
+        .some(g => g.enemyMode === 'house');
+    if (!hasHouseEnemy) { gameState.idleTimer = 0; return; }
 
     gameState.idleTimer += dt;
     const limit = gameState.level >= 5 ? 3 : 4;
     if (gameState.idleTimer >= limit) {
         gameState.idleTimer = 0;
-        const ghost = getNextHouseGhost();
-        if (ghost) releaseGhost(ghost);
+        const enemy = getNextHouseEnemy();
+        if (enemy) releaseEnemy(enemy);
     }
 }
 
 // ── Game Object Callbacks ─────────────────────────────────────────────────────
 
-function makeGhostTileCentered(getGhost: () => IGameObject): (_x: number, _y: number) => void {
+function makeEnemyTileCentered(getEnemy: () => IGameObject): (_x: number, _y: number) => void {
     return (_x: number, _y: number) => {
-        const ghost = getGhost();
-        // Skip AI for ghosts managed by the house system
-        if (ghost.ghostMode === 'house' || ghost.ghostMode === 'entering' || ghost.ghostMode === 'exiting') return;
-        // Eyes arrive at ghost house entrance — align to center column and enter the house
-        if (ghost.ghostMode === 'eyes' && ghost.roundedX() === 13 && ghost.roundedY() === 14) {
-            ghost.x = 13 * unit + unit / 2; // snap to center column so entry goes straight down
-            ghost.ghostMode = 'entering'; // keep SPEED_EYES — ghostEnter sets normal speed on exit
+        const enemy = getEnemy();
+        // Skip AI for enemies managed by the house system
+        if (enemy.enemyMode === 'house' || enemy.enemyMode === 'entering' || enemy.enemyMode === 'exiting') return;
+        // Eyes arrive at enemy house entrance — align to center column and enter the house
+        if (enemy.enemyMode === 'eyes' && enemy.roundedX() === 13 && enemy.roundedY() === 14) {
+            enemy.x = 13 * unit + unit / 2; // snap to center column so entry goes straight down
+            enemy.enemyMode = 'entering'; // keep SPEED_EYES — enemyEnter sets normal speed on exit
             return;
         }
-        AI.ghostTileCenter(ghost);
+        AI.enemyTileCenter(enemy);
     };
 }
 
@@ -475,11 +475,11 @@ function makeGhostTileCentered(getGhost: () => IGameObject): (_x: number, _y: nu
 
 function resetPositions(afterDeath = false): void {
     // Players
-    const pmPos = tileToPixel(START.pacman.x, START.pacman.y);
+    const pmPos = tileToPixel(START.player.x, START.player.y);
     for (const player of gameState.players) {
         player.actor.x = pmPos.x; player.actor.y = pmPos.y;
         player.actor.moveDir = (player.id === 2 || player.id === 4) ? 'right' : 'left';
-        player.actor.moveSpeed = getPacmanNormalSpeed(gameState.level);
+        player.actor.moveSpeed = getPlayerNormalSpeed(gameState.level);
         player.frozen = false;
     }
 
@@ -487,24 +487,24 @@ function resetPositions(afterDeath = false): void {
     const bl = gameState.blinky;
     const blPos = tileToPixel(START.blinky.x, START.blinky.y);
     bl.x = blPos.x; bl.y = blPos.y;
-    bl.moveDir = 'left'; bl.moveSpeed = getGhostNormalSpeed(gameState.level);
-    bl.ghostMode = 'scatter';
+    bl.moveDir = 'left'; bl.moveSpeed = getEnemyNormalSpeed(gameState.level);
+    bl.enemyMode = 'scatter';
 
     // House ghosts reset to their starting positions inside
-    const houseActors: Array<{ ghost: IGameObject; start: { x: number; y: number }; dir: Direction }> = [
-        { ghost: gameState.pinky, start: START.pinky, dir: 'down' }, // center starts down
-        { ghost: gameState.inky,  start: START.inky,  dir: 'up'   }, // left starts up
-        { ghost: gameState.clyde, start: START.clyde, dir: 'up'   }, // right starts up
+    const houseActors: Array<{ enemy: IGameObject; start: { x: number; y: number }; dir: Direction }> = [
+        { enemy: gameState.pinky, start: START.pinky, dir: 'down' }, // center starts down
+        { enemy: gameState.inky,  start: START.inky,  dir: 'up'   }, // left starts up
+        { enemy: gameState.clyde, start: START.clyde, dir: 'up'   }, // right starts up
     ];
-    for (const { ghost, start, dir } of houseActors) {
+    for (const { enemy, start, dir } of houseActors) {
         const pos = tileToPixel(start.x, start.y);
-        ghost.x = pos.x; ghost.y = pos.y;
-        ghost.moveDir = dir;
-        ghost.moveSpeed = 1.0;  // bounce/exit uses fixed speed; maze speed applied on release
-        ghost.ghostMode = 'house';
+        enemy.x = pos.x; enemy.y = pos.y;
+        enemy.moveDir = dir;
+        enemy.moveSpeed = 1.0;  // bounce/exit uses fixed speed; maze speed applied on release
+        enemy.enemyMode = 'house';
     }
 
-    // Ghost house release state
+    // Enemy house release state
     gameState.useGlobalDotCounter = afterDeath;
     gameState.globalDotCounter = 0;
     if (!afterDeath) {
@@ -516,7 +516,7 @@ function resetPositions(afterDeath = false): void {
     gameState.idleTimer = 0;
 
     gameState.frightenedRemaining = 0;
-    gameState.ghostEatenChain = 0;
+    gameState.enemyEatenChain = 0;
     gameState.scorePopups = [];
     gameState.fruitActive = null;
     // Cruise Elroy: suspend after death; clear for fresh level start
@@ -525,8 +525,8 @@ function resetPositions(afterDeath = false): void {
     resetScatterChaseTimer();
     AI.resetPrng();
 
-    // Immediately release any ghost whose counter is already at its limit (e.g. Pinky=0)
-    checkAndReleaseHouseGhosts();
+    // Immediately release any enemy whose counter is already at its limit (e.g. Pinky=0)
+    checkAndReleaseHouseEnemies();
 }
 
 function countRemainingDots(): number {
@@ -746,23 +746,23 @@ function checkCollisions(): void {
         if (!player.active || player.dying || player.frozen) continue;
         const px = player.actor.roundedX();
         const py = player.actor.roundedY();
-        for (const ghost of gameState.ghosts) {
-            if (ghost.roundedX() === px && ghost.roundedY() === py) {
-                if (ghost.ghostMode === 'frightened') {
-                    eatGhost(ghost, player);
-                } else if (ghost.ghostMode !== 'eyes' && ghost.ghostMode !== 'entering' &&
-                           ghost.ghostMode !== 'house' && ghost.ghostMode !== 'exiting') {
+        for (const enemy of gameState.enemies) {
+            if (enemy.roundedX() === px && enemy.roundedY() === py) {
+                if (enemy.enemyMode === 'frightened') {
+                    eatEnemy(enemy, player);
+                } else if (enemy.enemyMode !== 'eyes' && enemy.enemyMode !== 'entering' &&
+                           enemy.enemyMode !== 'house' && enemy.enemyMode !== 'exiting') {
                     loseLife(player);
-                    break; // stop checking ghosts for this player; continue to next player
+                    break; // stop checking enemies for this player; continue to next player
                 }
             }
         }
     }
 }
 
-// ── Pac-Man Tile Callbacks ────────────────────────────────────────────────────
+// ── Player Tile Callbacks ───────────────────────────────────────────────────────
 
-function makePacmanOnTileChanged(player: PlayerState): (x: number, y: number) => void {
+function makePlayerOnTileChanged(player: PlayerState): (x: number, y: number) => void {
     return (x: number, y: number) => {
         const curTile = Levels.levelDynamic[y][x];
 
@@ -771,7 +771,7 @@ function makePacmanOnTileChanged(player: PlayerState): (x: number, y: number) =>
             Levels.levelDynamic[y][x] = 5;
             Stats.addToScore(10);
             player.actor.moveSpeed = 0.0;
-            Time.addTimer(0.01666666667, () => { player.actor.moveSpeed = getCurrentPacmanSpeed(); });
+            Time.addTimer(0.01666666667, () => { player.actor.moveSpeed = getCurrentPlayerSpeed(); });
             incrementDotCounters();
             Sound.dot();
             if (countRemainingDots() === 0) levelClear();
@@ -782,7 +782,7 @@ function makePacmanOnTileChanged(player: PlayerState): (x: number, y: number) =>
             Levels.levelDynamic[y][x] = 5;
             Stats.addToScore(50);
             player.actor.moveSpeed = 0.0;
-            Time.addTimer(0.05, () => { player.actor.moveSpeed = getCurrentPacmanSpeed(); });
+            Time.addTimer(0.05, () => { player.actor.moveSpeed = getCurrentPlayerSpeed(); });
             incrementDotCounters();
             Sound.energizer();
             activateFrightened();
@@ -791,7 +791,7 @@ function makePacmanOnTileChanged(player: PlayerState): (x: number, y: number) =>
     };
 }
 
-function ghostOnTileChanged(_x: number, _y: number): void {}
+function enemyOnTileChanged(_x: number, _y: number): void {}
 
 // ── Initialization ────────────────────────────────────────────────────────────
 
@@ -801,9 +801,9 @@ function createPlayer(id: number, startTile: { x: number; y: number }, input: Pl
         'yellow',
         startTile.x, startTile.y,
         0.667,
-        () => Move.pacman(playerState),
-        (obj) => Draw.pacman(obj, playerState),
-        (x, y) => makePacmanOnTileChanged(playerState)(x, y),
+        () => Move.player(playerState),
+        (obj) => Draw.player(obj, playerState),
+        (x, y) => makePlayerOnTileChanged(playerState)(x, y),
         (_x, _y) => {},
     );
     playerState = { id, actor, input, frozen: false, dying: false, deathProgress: 0, active: true };
@@ -819,16 +819,16 @@ function initializeLevel(slots: ConfirmedSlot[]): void {
     gameState.modeChangesInHouse  = { 'hotpink': 0, 'cyan': 0, 'orange': 0 };
 
     // Create all players from confirmed slots
-    gameState.players = slots.map(s => createPlayer(s.id, START.pacman, s.input));
+    gameState.players = slots.map(s => createPlayer(s.id, START.player, s.input));
 
-    gameState.blinky = new GameObject('red',     START.blinky.x, START.blinky.y, 0.667, Move.blinky, Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.blinky));
-    gameState.inky   = new GameObject('cyan',    START.inky.x,   START.inky.y,   0.667, Move.inky,   Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.inky));
-    gameState.pinky  = new GameObject('hotpink', START.pinky.x,  START.pinky.y,  0.667, Move.pinky,  Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.pinky));
-    gameState.clyde  = new GameObject('orange',  START.clyde.x,  START.clyde.y,  0.667, Move.clyde,  Draw.ghost,  ghostOnTileChanged, makeGhostTileCentered(() => gameState.clyde));
+    gameState.blinky = new GameObject('red',     START.blinky.x, START.blinky.y, 0.667, Move.blinky, Draw.enemy,  enemyOnTileChanged, makeEnemyTileCentered(() => gameState.blinky));
+    gameState.inky   = new GameObject('cyan',    START.inky.x,   START.inky.y,   0.667, Move.inky,   Draw.enemy,  enemyOnTileChanged, makeEnemyTileCentered(() => gameState.inky));
+    gameState.pinky  = new GameObject('hotpink', START.pinky.x,  START.pinky.y,  0.667, Move.pinky,  Draw.enemy,  enemyOnTileChanged, makeEnemyTileCentered(() => gameState.pinky));
+    gameState.clyde  = new GameObject('orange',  START.clyde.x,  START.clyde.y,  0.667, Move.clyde,  Draw.enemy,  enemyOnTileChanged, makeEnemyTileCentered(() => gameState.clyde));
 
-    // Player actors drawn first (under ghosts)
+    // Player actors drawn first (under enemies)
     gameState.gameObjects = [...gameState.players.map(p => p.actor), gameState.blinky, gameState.inky, gameState.pinky, gameState.clyde];
-    gameState.ghosts      = [gameState.blinky, gameState.inky, gameState.pinky, gameState.clyde];
+    gameState.enemies      = [gameState.blinky, gameState.inky, gameState.pinky, gameState.clyde];
 
     // resetPositions sets all positions, modes, and triggers initial house releases
     resetPositions(false);
@@ -837,7 +837,7 @@ function initializeLevel(slots: ConfirmedSlot[]): void {
 // ── Ambient Siren ─────────────────────────────────────────────────────────────
 
 function updateAmbientSiren(): void {
-    if (gameState.ghosts.some(g => g.ghostMode === 'eyes')) {
+    if (gameState.enemies.some(g => g.enemyMode === 'eyes')) {
         Sound.startSiren('eyes');
     } else if (gameState.frightenedRemaining > 0) {
         Sound.startSiren('blue');
@@ -877,7 +877,7 @@ function update(): void {
         updateScatterChaseMode(Time.deltaTime);
         updateFrightenedMode(Time.deltaTime);
         updateElroy();
-        updateGhostTunnelSpeeds();
+        updateEnemyTunnelSpeeds();
         updateIdleTimer(Time.deltaTime);
         updateFruit();
         updateAmbientSiren();
@@ -892,7 +892,7 @@ function update(): void {
     }
 
     Draw.level();
-    Draw.advancePacmanAnim();
+    Draw.advancePlayerAnim();
 
     for (const go of gameState.gameObjects) {
         go.update();
@@ -930,7 +930,7 @@ function start(slots: ConfirmedSlot[]): void {
     gameState.scatterChaseIndex = 0;
     gameState.scatterChaseElapsed = 0;
     gameState.frightenedRemaining = 0;
-    gameState.ghostEatenChain = 0;
+    gameState.enemyEatenChain = 0;
     gameState.scorePopups = [];
     gameState.useGlobalDotCounter = false;
     gameState.globalDotCounter = 0;
@@ -976,7 +976,7 @@ let menuAnimTime = 0;
 let menuAnimLastTs = 0;
 let startScreenPrevA = false; // tracks gamepad A button state for rising-edge detection
 
-function drawMenuPacman(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, dir: 'left' | 'right', mouthOpen: number): void {
+function drawMenuPlayer(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, dir: 'left' | 'right', mouthOpen: number): void {
     const dirMultiplier = dir === 'right' ? 0 : 1;
     ctx.fillStyle = 'yellow';
     ctx.beginPath();
@@ -1005,44 +1005,44 @@ function drawMenuChase(t: number): void {
     const y = unit * 28.5;
     const spacing = unit * 1.8;
     const spacingB = unit * 2.8;  // wider spacing for phase B
-    const ghostColors = ['red', '#ffb8ff', 'cyan', 'orange'];
+    const enemyColors = ['red', '#ffb8ff', 'cyan', 'orange'];
     const PHASE_A = 4;
     const PAUSE   = 1;
     const PHASE_B = 4;
     const CYCLE   = PHASE_A + PAUSE + PHASE_B;
-    const totalDist = w + 2 * unit + ghostColors.length * spacing;
-    const totalDistB = w + 2 * unit + ghostColors.length * spacingB;
+    const totalDist = w + 2 * unit + enemyColors.length * spacing;
+    const totalDistB = w + 2 * unit + enemyColors.length * spacingB;
     const cycleT = t % CYCLE;
 
     const frames = [0.0, 0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1];
     const mouthOpen = frames[Math.floor(t * 30) % frames.length];
 
     if (cycleT < PHASE_A) {
-        // Phase A: Pac-Man fleeing right, ghosts chasing
+        // Phase A: Player fleeing right, enemies chasing
         const progress = cycleT / PHASE_A;
         const pacX = -unit + totalDist * progress;
-        for (let i = ghostColors.length - 1; i >= 0; i--) {
+        for (let i = enemyColors.length - 1; i >= 0; i--) {
             const gx = pacX - (i + 1) * spacing;
             if (gx < -2 * unit || gx > w + 2 * unit) continue;
-            Draw.drawGhostBody(ghostColors[i], gx, y, scale);
-            Draw.drawGhostEyes(ghostColors[i], gx, y, scale, 'right');
+            Draw.drawEnemyBody(enemyColors[i], gx, y, scale);
+            Draw.drawEnemyEyes(enemyColors[i], gx, y, scale, 'right');
         }
         if (pacX > -2 * unit && pacX < w + 2 * unit) {
-            drawMenuPacman(ctx, pacX, y, size, 'right', mouthOpen);
+            drawMenuPlayer(ctx, pacX, y, size, 'right', mouthOpen);
         }
     } else if (cycleT >= PHASE_A + PAUSE) {
-        // Phase B: frightened ghosts fleeing left, big Pac-Man chasing
+        // Phase B: frightened enemies fleeing left, big Player chasing
         const progress = (cycleT - PHASE_A - PAUSE) / PHASE_B;
-        const pacX = w + unit + ghostColors.length * spacingB - totalDistB * progress;
+        const pacX = w + unit + enemyColors.length * spacingB - totalDistB * progress;
         const pacSize2 = scale * unit * 2;
-        for (let i = 0; i < ghostColors.length; i++) {
+        for (let i = 0; i < enemyColors.length; i++) {
             const gx = pacX - (i + 1) * spacingB;
             if (gx < -2 * unit || gx > w + 2 * unit) continue;
-            Draw.drawGhostBody('#0000cc', gx, y, scale);
+            Draw.drawEnemyBody('#0000cc', gx, y, scale);
             Draw.drawFrightenedEyes(gx, y, scale, '#0000cc');
         }
         if (pacX > -3 * unit && pacX < w + 3 * unit) {
-            drawMenuPacman(ctx, pacX, y, pacSize2, 'left', mouthOpen);
+            drawMenuPlayer(ctx, pacX, y, pacSize2, 'left', mouthOpen);
         }
     }
 }
@@ -1352,9 +1352,9 @@ window.onload = function () {
             <div id="dbg-content">
                 <label><input type="checkbox" id="dbg-targets"> Target tiles</label>
                 <label><input type="checkbox" id="dbg-viz"> Targeting viz</label>
-                <label><input type="checkbox" id="dbg-modes"> Ghost modes</label>
+                <label><input type="checkbox" id="dbg-modes"> Enemy modes</label>
                 <label><input type="checkbox" id="dbg-redzones"> Red zones</label>
-                <label><input type="checkbox" id="dbg-ghostpaths"> Ghost paths</label>
+                <label><input type="checkbox" id="dbg-ghostpaths"> Enemy paths</label>
                 <label><input type="checkbox" id="dbg-tilepicker"> Tile picker</label>
                 <label style="flex-direction:column;align-items:flex-start;gap:10px">
                     <span id="dbg-extra-players-label">Extra players: 0</span>
@@ -1390,7 +1390,7 @@ window.onload = function () {
             gameState.debugShowRedZones = (e.target as HTMLInputElement).checked;
         };
         (document.getElementById('dbg-ghostpaths') as HTMLInputElement).onchange = (e) => {
-            gameState.debugShowGhostPaths = (e.target as HTMLInputElement).checked;
+            gameState.debugShowEnemyPaths = (e.target as HTMLInputElement).checked;
         };
         (document.getElementById('dbg-tilepicker') as HTMLInputElement).onchange = (e) => {
             gameState.debugTilePicker = (e.target as HTMLInputElement).checked;
