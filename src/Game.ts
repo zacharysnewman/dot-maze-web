@@ -715,12 +715,14 @@ function loseLife(player: PlayerState): void {
         player.dying = false;
         player.active = false;
 
-        // Each death costs one shared life immediately
-        gameState.sharedLives--;
-        if (gameState.sharedLives < 0) {
-            triggerGameOver();
-        } else if (gameState.players.some(p => p.active)) {
+        // Deduct a life, floored at 0
+        if (gameState.sharedLives > 0) gameState.sharedLives--;
+
+        const anyoneAlive = gameState.players.some(p => p.active);
+        if (anyoneAlive) {
             // Other players still alive — dead player sits out until next level
+        } else if (gameState.sharedLives === 0) {
+            triggerGameOver();
         } else {
             // All players down but lives remain — revive everyone and play READY!
             for (const p of gameState.players) { p.active = true; p.dying = false; }
