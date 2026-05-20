@@ -1212,12 +1212,12 @@ function playerSelectLoop(): void {
         const p1gp = (navigator.getGamepads ? navigator.getGamepads() : [])[0] ?? null;
         const prev0 = prevBtns[0] ?? [];
         if (p1gp) {
-            const aPressed = p1gp.buttons[0]?.pressed  ?? false;
+            const aPressed = (p1gp.buttons[0]?.pressed ?? false) || (p1gp.buttons[3]?.pressed ?? false);
             const dLeft    = p1gp.buttons[14]?.pressed ?? false;
             const dRight   = p1gp.buttons[15]?.pressed ?? false;
             const dUp      = p1gp.buttons[12]?.pressed ?? false;
             const dDown    = p1gp.buttons[13]?.pressed ?? false;
-            if (aPressed  && !prev0[0])  confirmAndStart();
+            if (aPressed  && !(prev0[0] || prev0[3]))  confirmAndStart();
             if ((dLeft && !prev0[14]) || (dRight && !prev0[15])) toggleMode();
             if (dUp   && !prev0[12]) adjustCount(-1);
             if (dDown && !prev0[13]) adjustCount(+1);
@@ -1268,7 +1268,7 @@ function startScreenLoop(): void {
 
     // Poll only gamepad 0 (P1) for A button — other controllers don't advance the menu
     const p1Gamepad = (navigator.getGamepads ? navigator.getGamepads() : [])[0] ?? null;
-    const aDown = p1Gamepad?.buttons[0]?.pressed ?? false;
+    const aDown = (p1Gamepad?.buttons[0]?.pressed ?? false) || (p1Gamepad?.buttons[3]?.pressed ?? false);
     if (aDown && !startScreenPrevA) handleMenuInteraction(true);
     startScreenPrevA = aDown;
 
