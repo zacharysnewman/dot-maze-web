@@ -1133,10 +1133,10 @@ function handleMenuInteraction(hasGamepad = false): void {
         menuMusicPlaying = true;
         return;
     }
-    // Audio already unlocked — go to player select if a controller was ever active,
+    // Audio already unlocked — go to player select if a controller is connected,
     // otherwise start solo directly (keeps single-player flow intact).
     gameStarted = true;
-    if (controllerActive) {
+    if (controllerActive || GamepadPlayerInput.connectedIndices().length > 0) {
         playerSelectLoop();
     } else {
         start([{ id: 1, input: new CompositePlayerInput([new KeyboardPlayerInput(), new TouchPlayerInput()]) as PlayerInput }]);
