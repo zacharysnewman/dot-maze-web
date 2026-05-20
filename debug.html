@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gamepad Debug</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    padding: 16px;
+  }
+  h1 { color: #fff; font-size: 16px; margin-bottom: 4px; }
+  .subtitle { color: #666; font-size: 11px; margin-bottom: 16px; }
+  #status { color: #ffcc00; margin-bottom: 16px; min-height: 18px; }
+
+  .copy-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  button {
+    background: #2a2a2a;
+    color: #e0e0e0;
+    border: 1px solid #444;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    border-radius: 3px;
+  }
+  button:hover { background: #3a3a3a; border-color: #666; }
+  button:active { background: #222; }
+  #copy-btn.copied { color: #4caf50; border-color: #4caf50; }
+
+  .gamepad-card {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+  .gamepad-id {
+    color: #7ec8e3;
+    font-size: 12px;
+    margin-bottom: 2px;
+    word-break: break-all;
+  }
+  .gamepad-meta {
+    color: #888;
+    font-size: 11px;
+    margin-bottom: 10px;
+  }
+  .mapping-standard { color: #4caf50; }
+  .mapping-none     { color: #ff9800; }
+
+  .section-label {
+    color: #aaa;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .section { margin-bottom: 10px; }
+
+  .btn-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 2px;
+  }
+  .btn-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid #333;
+    font-size: 11px;
+    background: #222;
+    color: #666;
+    min-width: 32px;
+    justify-content: center;
+  }
+  .btn-chip.pressed {
+    background: #2a4a2a;
+    border-color: #4caf50;
+    color: #4caf50;
+  }
+  .btn-chip.touched {
+    background: #2a3a4a;
+    border-color: #7ec8e3;
+    color: #7ec8e3;
+  }
+  .btn-chip .idx { opacity: 0.5; font-size: 10px; }
+
+  .axes-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .axis-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .axis-label { color: #666; font-size: 10px; }
+  .axis-bar-wrap {
+    width: 60px;
+    height: 6px;
+    background: #2a2a2a;
+    border-radius: 3px;
+    position: relative;
+    border: 1px solid #333;
+  }
+  .axis-bar-fill {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    border-radius: 3px;
+    background: #7ec8e3;
+    transition: none;
+  }
+  .axis-val { color: #aaa; font-size: 10px; width: 50px; text-align: center; }
+
+  #no-gamepad {
+    color: #555;
+    font-size: 13px;
+    padding: 20px 0;
+  }
+
+  .ua-line {
+    color: #444;
+    font-size: 10px;
+    margin-bottom: 12px;
+    word-break: break-all;
+  }
+</style>
+</head>
+<body>
+
+<h1>Gamepad Debug</h1>
+<p class="subtitle">Connect a controller, then press any button to wake it up.</p>
+<div class="ua-line" id="ua"></div>
+
+<div id="status">Waiting for gamepad…</div>
+
+<div class="copy-bar">
+  <button id="copy-btn">Copy snapshot</button>
+  <button id="copy-btn-json">Copy JSON</button>
+</div>
+
+<div id="cards"></div>
+<div id="no-gamepad"></div>
+
+<script>
+  document.getElementById('ua').textContent = navigator.userAgent;
+
+  const seenIndices = new Set();
+  window.addEventListener('gamepadconnected',    e => seenIndices.add(e.gamepad.index));
+  window.addEventListener('gamepaddisconnected', e => seenIndices.delete(e.gamepad.index));
+
+  function allGamepads() {
+    const map = new Map();
+    for (const gp of (navigator.getGamepads ? navigator.getGamepads() : [])) {
+      if (gp) map.set(gp.index, gp);
+    }
+    for (const idx of seenIndices) {
+      if (!map.has(idx)) {
+        // was seen but now null — slot still reserved
+        map.set(idx, null);
+      }
+    }
+    return [...map.values()];
+  }
+
+  function snapshot() {
+    return {
+      userAgent: navigator.userAgent,
+      timestamp: new Date().toISOString(),
+      gamepads: allGamepads().map(gp => {
+        if (!gp) return null;
+        return {
+          index:   gp.index,
+          id:      gp.id,
+          mapping: gp.mapping,
+          connected: gp.connected,
+          timestamp: gp.timestamp,
+          buttons: Array.from(gp.buttons, (b, i) => ({
+            index:   i,
+            pressed: b.pressed,
+            touched: b.touched,
+            value:   +b.value.toFixed(4),
+          })),
+          axes: Array.from(gp.axes, (v, i) => ({
+            index: i,
+            value: +v.toFixed(4),
+          })),
+        };
+      }),
+    };
+  }
+
+  function formatReadable(snap) {
+    const lines = [];
+    lines.push(`=== Gamepad Debug Snapshot ===`);
+    lines.push(`Time:      ${snap.timestamp}`);
+    lines.push(`UserAgent: ${snap.userAgent}`);
+    lines.push('');
+    if (!snap.gamepads.length) {
+      lines.push('No gamepads detected.');
+      return lines.join('\n');
+    }
+    for (const gp of snap.gamepads) {
+      if (!gp) { lines.push('(disconnected slot)'); continue; }
+      lines.push(`--- Gamepad ${gp.index} ---`);
+      lines.push(`ID:      ${gp.id}`);
+      lines.push(`Mapping: ${gp.mapping || '(none)'}`);
+      lines.push(`Connected: ${gp.connected}`);
+      lines.push('');
+      lines.push('Buttons:');
+      for (const b of gp.buttons) {
+        const flags = [];
+        if (b.pressed) flags.push('PRESSED');
+        if (b.touched) flags.push('touched');
+        const flag = flags.length ? `  <- ${flags.join(', ')}` : '';
+        lines.push(`  [${String(b.index).padStart(2)}]  value=${b.value.toFixed(4)}${flag}`);
+      }
+      lines.push('');
+      lines.push('Axes:');
+      for (const a of gp.axes) {
+        const bar = renderBarText(a.value);
+        lines.push(`  [${String(a.index).padStart(2)}]  ${bar}  ${a.value >= 0 ? ' ' : ''}${a.value.toFixed(4)}`);
+      }
+      lines.push('');
+    }
+    return lines.join('\n');
+  }
+
+  function renderBarText(v) {
+    const w = 20;
+    const mid = Math.floor(w / 2);
+    const pos = Math.round((v + 1) / 2 * w);
+    const arr = Array(w).fill('·');
+    arr[mid] = '|';
+    const clamp = Math.max(0, Math.min(w - 1, pos));
+    arr[clamp] = v < 0 ? '<' : v > 0 ? '>' : '|';
+    return '[' + arr.join('') + ']';
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    }
+  }
+
+  function flashCopied(btn) {
+    btn.classList.add('copied');
+    btn.textContent = btn.textContent.replace(/Copy.*/, 'Copied!');
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.textContent = btn === document.getElementById('copy-btn') ? 'Copy snapshot' : 'Copy JSON';
+    }, 2000);
+  }
+
+  document.getElementById('copy-btn').addEventListener('click', async () => {
+    const snap = snapshot();
+    const text = formatReadable(snap);
+    await copyText(text);
+    flashCopied(document.getElementById('copy-btn'));
+  });
+
+  document.getElementById('copy-btn-json').addEventListener('click', async () => {
+    const snap = snapshot();
+    await copyText(JSON.stringify(snap, null, 2));
+    flashCopied(document.getElementById('copy-btn-json'));
+  });
+
+  // ---- render loop ----
+
+  let lastCount = -1;
+
+  function renderAxisBar(value) {
+    const pct = (value + 1) / 2 * 100;
+    const left  = value < 0 ? `${pct}%` : '50%';
+    const width = `${Math.abs(value) * 50}%`;
+    return `<div class="axis-bar-fill" style="left:${left};width:${width}"></div>`;
+  }
+
+  function render() {
+    const gps = allGamepads();
+    const statusEl = document.getElementById('status');
+    const cardsEl  = document.getElementById('cards');
+    const noEl     = document.getElementById('no-gamepad');
+
+    if (gps.length === 0) {
+      statusEl.textContent = 'No gamepads detected — connect a controller and press a button.';
+      cardsEl.innerHTML  = '';
+      noEl.textContent   = '';
+    } else {
+      const active = gps.filter(Boolean);
+      statusEl.textContent = `${active.length} gamepad(s) active`;
+
+      let html = '';
+      for (const gp of gps) {
+        if (!gp) continue;
+
+        const mappingClass = gp.mapping === 'standard' ? 'mapping-standard' : 'mapping-none';
+        const mappingLabel = gp.mapping === 'standard'
+          ? '✓ standard mapping'
+          : `mapping: "${gp.mapping || 'none'}" (raw HID)`;
+
+        // buttons
+        let btnHtml = '';
+        for (let i = 0; i < gp.buttons.length; i++) {
+          const b = gp.buttons[i];
+          const cls = b.pressed ? 'pressed' : b.touched ? 'touched' : '';
+          btnHtml += `<span class="btn-chip ${cls}"><span class="idx">${i}</span>${b.pressed ? '●' : '○'}</span>`;
+        }
+
+        // axes
+        let axHtml = '';
+        for (let i = 0; i < gp.axes.length; i++) {
+          const v = gp.axes[i];
+          axHtml += `
+            <div class="axis-cell">
+              <div class="axis-label">ax${i}</div>
+              <div class="axis-bar-wrap">${renderAxisBar(v)}</div>
+              <div class="axis-val">${v.toFixed(3)}</div>
+            </div>`;
+        }
+
+        html += `
+          <div class="gamepad-card">
+            <div class="gamepad-id">${gp.id}</div>
+            <div class="gamepad-meta">
+              index ${gp.index} &nbsp;·&nbsp;
+              <span class="${mappingClass}">${mappingLabel}</span>
+            </div>
+            <div class="section">
+              <div class="section-label">Buttons (${gp.buttons.length})</div>
+              <div class="btn-grid">${btnHtml}</div>
+            </div>
+            <div class="section">
+              <div class="section-label">Axes (${gp.axes.length})</div>
+              <div class="axes-row">${axHtml}</div>
+            </div>
+          </div>`;
+      }
+      cardsEl.innerHTML = html;
+      noEl.textContent = '';
+    }
+
+    requestAnimationFrame(render);
+  }
+
+  render();
+</script>
+</body>
+</html>
