@@ -139,12 +139,25 @@
     margin-bottom: 12px;
     word-break: break-all;
   }
+
+  #press-log-section { margin-bottom: 20px; }
+  .log-entry {
+    font-size: 11px;
+    padding: 3px 0;
+    border-bottom: 1px solid #1e1e1e;
+    display: flex;
+    gap: 10px;
+  }
+  .log-entry .log-time { color: #555; min-width: 60px; }
+  .log-entry .log-gp   { color: #888; min-width: 20px; }
+  .log-entry .log-what { color: #4caf50; }
+  .log-entry .log-what.axis { color: #7ec8e3; }
 </style>
 </head>
 <body>
 
 <h1>Gamepad Debug</h1>
-<p class="subtitle">Connect a controller, then press any button to wake it up.</p>
+<p class="subtitle">Connect a controller, press any button to wake it up, then tap each direction.</p>
 <div class="ua-line" id="ua"></div>
 
 <div id="status">Waiting for gamepad…</div>
@@ -152,6 +165,13 @@
 <div class="copy-bar">
   <button id="copy-btn">Copy snapshot</button>
   <button id="copy-btn-json">Copy JSON</button>
+  <button id="clear-log-btn">Clear log</button>
+</div>
+
+<div id="press-log-section" style="display:none">
+  <div class="section-label" style="margin-bottom:6px">Press log (tap each direction once)</div>
+  <div id="press-log"></div>
+  <button id="copy-log-btn" style="margin-top:8px;margin-bottom:20px">Copy log</button>
 </div>
 
 <div id="cards"></div>
@@ -163,6 +183,95 @@
   const seenIndices = new Set();
   window.addEventListener('gamepadconnected',    e => seenIndices.add(e.gamepad.index));
   window.addEventListener('gamepaddisconnected', e => seenIndices.delete(e.gamepad.index));
+
+  // ---- press log ----
+  const pressLog = [];       // { time, gpIndex, gpId, kind, index, value }
+  const prevState = new Map(); // gpIndex -> { buttons: bool[], axes: number[] }
+  const AXIS_THRESHOLD = 0.25;
+
+  function updatePressLog(gps) {
+    for (const gp of gps) {
+      if (!gp) continue;
+      const prev = prevState.get(gp.index) || { buttons: [], axes: [] };
+
+      for (let i = 0; i < gp.buttons.length; i++) {
+        const nowPressed = gp.buttons[i].pressed;
+        const wasPressed = prev.buttons[i] ?? false;
+        if (nowPressed && !wasPressed) {
+          pressLog.push({ time: Date.now(), gpIndex: gp.index, gpId: gp.id,
+            kind: 'button', index: i, value: gp.buttons[i].value });
+        }
+      }
+
+      for (let i = 0; i < gp.axes.length; i++) {
+        const now = gp.axes[i];
+        const was = prev.axes[i] ?? 0;
+        const nowActive = Math.abs(now) > AXIS_THRESHOLD;
+        const wasActive = Math.abs(was) > AXIS_THRESHOLD;
+        if (nowActive && !wasActive) {
+          pressLog.push({ time: Date.now(), gpIndex: gp.index, gpId: gp.id,
+            kind: 'axis', index: i, value: +now.toFixed(3) });
+        }
+      }
+
+      prevState.set(gp.index, {
+        buttons: Array.from(gp.buttons, b => b.pressed),
+        axes:    Array.from(gp.axes),
+      });
+    }
+  }
+
+  function renderPressLog() {
+    const section = document.getElementById('press-log-section');
+    const el = document.getElementById('press-log');
+    if (pressLog.length === 0) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    const t0 = pressLog[0].time;
+    el.innerHTML = pressLog.map(e => {
+      const t = ((e.time - t0) / 1000).toFixed(2) + 's';
+      const what = e.kind === 'button'
+        ? `button[${e.index}] pressed`
+        : `axis[${e.index}] = ${e.value}`;
+      const cls = e.kind === 'axis' ? 'axis' : '';
+      return `<div class="log-entry">
+        <span class="log-time">${t}</span>
+        <span class="log-gp">gp${e.gpIndex}</span>
+        <span class="log-what ${cls}">${what}</span>
+      </div>`;
+    }).join('');
+  }
+
+  function formatLog() {
+    if (pressLog.length === 0) return '(no presses recorded)';
+    const t0 = pressLog[0].time;
+    const lines = [
+      `=== Press Log ===`,
+      `UserAgent: ${navigator.userAgent}`,
+      '',
+    ];
+    for (const e of pressLog) {
+      const t = ((e.time - t0) / 1000).toFixed(2) + 's';
+      const what = e.kind === 'button'
+        ? `button[${e.index}] pressed  (value=${e.value})`
+        : `axis[${e.index}] activated  (value=${e.value})`;
+      lines.push(`  [${t}]  gp${e.gpIndex}  ${what}`);
+    }
+    lines.push('');
+    lines.push(`Controller: ${pressLog[0]?.gpId ?? 'unknown'}`);
+    return lines.join('\n');
+  }
+
+  document.getElementById('clear-log-btn').addEventListener('click', () => {
+    pressLog.length = 0;
+    renderPressLog();
+  });
+
+  document.getElementById('copy-log-btn').addEventListener('click', async () => {
+    await copyText(formatLog());
+    const btn = document.getElementById('copy-log-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy log'; }, 2000);
+  });
 
   function allGamepads() {
     const map = new Map();
@@ -303,6 +412,8 @@
 
   function render() {
     const gps = allGamepads();
+    updatePressLog(gps);
+    renderPressLog();
     const statusEl = document.getElementById('status');
     const cardsEl  = document.getElementById('cards');
     const noEl     = document.getElementById('no-gamepad');
