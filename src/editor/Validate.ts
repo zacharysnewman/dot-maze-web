@@ -4,10 +4,10 @@ import { TILE_WALL, TILE_DOT, TILE_POWER } from '../tiles';
 import {
     EDIT_MAX_Y,
     EDIT_MIN_Y,
+    HOUSE_EXIT,
     HOUSE_MAX_X,
+    HOUSE_MAX_Y,
     HOUSE_MIN_X,
-    HOUSE_MIN_Y,
-    isEnemyHouseTile,
     isReservedRow,
 } from './Bounds';
 import {
@@ -35,13 +35,21 @@ function isWalkable(level: LevelData, x: number, y: number): boolean {
     return tx >= 0 && tx < gridW && ty >= 0 && ty < gridH && level.tiles[ty][tx] > TILE_WALL;
 }
 
-/** Where `Move.enemyExit` parks an enemy once it clears the door. */
-const HOUSE_EXIT = { x: 13, y: HOUSE_MIN_Y };
+/**
+ * The house plus the corridor it opens onto — the pocket an enemy has to get
+ * out of. Wider than `isEnemyHouseTile`, which covers only the locked
+ * structure: the exit row above it is editable, but escaping still means
+ * leaving the house's footprint entirely.
+ */
+function inHouseArea(x: number, y: number): boolean {
+    return x >= HOUSE_MIN_X && x <= HOUSE_MAX_X
+        && y >= HOUSE_EXIT.y && y <= HOUSE_MAX_Y;
+}
 
 /**
  * Enemies resume normal movement from the house exit tile, so the maze has to
- * offer them a way out of the locked enclosure. Walk out from the exit and see
- * whether any tile beyond the house is reachable.
+ * offer them a way out. Walk out from the exit and see whether anything beyond
+ * the house's footprint is reachable.
  */
 function houseExitEscapes(level: LevelData): boolean {
     if (!isWalkable(level, HOUSE_EXIT.x, HOUSE_EXIT.y)) return false;
@@ -53,7 +61,7 @@ function houseExitEscapes(level: LevelData): boolean {
         if (seen.has(key)) continue;
         if (!isWalkable(level, x, y)) continue;
         seen.add(key);
-        if (!isEnemyHouseTile(x, y)) return true;
+        if (!inHouseArea(x, y)) return true;
         queue.push({ x: x - 1, y }, { x: x + 1, y }, { x, y: y - 1 }, { x, y: y + 1 });
     }
     return false;
@@ -128,12 +136,14 @@ export function validateLevel(level: LevelData, tileSet?: TileSet): ValidationRe
         );
     }
 
-    // 6b. Slow tiles on walls do nothing — enemies can never stand there
+    // 6b. Slow zones on walls do nothing — enemies can never stand there
     const strandedSlow = level.tunnelSlowTiles.filter(
         t => !isWalkable(level, t.x, t.y),
     ).length;
     if (strandedSlow > 0) {
-        warnings.push(`${strandedSlow} slow tile(s) sit on walls, where no enemy can reach them`);
+        warnings.push(
+            `${strandedSlow} slow-zone tile(s) sit on walls, where no enemy can reach them`,
+        );
     }
 
     // 7. BFS reachability from player start (respect tunnel wrapping)
@@ -199,11 +209,16 @@ export function validateLevel(level: LevelData, tileSet?: TileSet): ValidationRe
     if (usage.door === 0) {
         warnings.push('No enemy door tiles — enemies will not have a gate to pass through');
     }
-    if (!houseExitEscapes(level)) {
+    if (!isWalkable(level, HOUSE_EXIT.x, HOUSE_EXIT.y)) {
+        errors.push(
+            `The enemy house exit (${HOUSE_EXIT.x}, ${HOUSE_EXIT.y}) is walled in — `
+            + 'enemies leave the house onto that tile and would be stuck in a wall',
+        );
+    } else if (!houseExitEscapes(level)) {
         errors.push(
             `Enemies leave the house at (${HOUSE_EXIT.x}, ${HOUSE_EXIT.y}) and cannot get out — `
-            + `wall off fewer tiles around columns ${HOUSE_MIN_X}\u2013${HOUSE_MAX_X}, `
-            + `row ${HOUSE_MIN_Y}`,
+            + `clear a path along row ${HOUSE_EXIT.y}, past column ${HOUSE_MIN_X} `
+            + `or column ${HOUSE_MAX_X}`,
         );
     }
     if (powerDots === 0) {
@@ -231,7 +246,7 @@ export function validateLevel(level: LevelData, tileSet?: TileSet): ValidationRe
     const redKeys = new Set(level.redZoneTiles.map(t => `${t.x},${t.y}`));
     const doubleZoned = level.tunnelSlowTiles.filter(t => redKeys.has(`${t.x},${t.y}`)).length;
     if (doubleZoned > 0) {
-        warnings.push(`${doubleZoned} tile(s) are marked as both a red zone and a slow tile`);
+        warnings.push(`${doubleZoned} tile(s) carry both zones`);
     }
 
     // 13. One movable object to a tile

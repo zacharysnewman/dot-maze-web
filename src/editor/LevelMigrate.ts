@@ -47,7 +47,7 @@ export function migrateLevel(level: LevelData): LevelData {
     delete (level as unknown as LegacyLevel).tunnelSlowColMin;
 
     // A tile carries at most one zone. Hand-edited or pre-exclusivity files can
-    // list the same tile twice; the red zone wins, matching the editor's order.
+    // list the same tile twice; the no-up zone wins, matching the editor's order.
     if (Array.isArray(level.redZoneTiles)) {
         const red = new Set(level.redZoneTiles.map(t => `${t.x},${t.y}`));
         level.tunnelSlowTiles = level.tunnelSlowTiles.filter(t => !red.has(`${t.x},${t.y}`));

@@ -11,6 +11,7 @@ import { loadPrefs, savePrefs } from './EditorPrefs';
 import {
     EDIT_MAX_Y,
     EDIT_MIN_Y,
+    FIXED_SPAWN_HINT,
     HOUSE_HINT,
     HOUSE_MAX_X,
     HOUSE_MAX_Y,
@@ -26,6 +27,7 @@ import {
     BUDGET_ROWS,
     MARKER_KINDS,
     PAINTABLE_TILE_KINDS,
+    PLACEABLE_MARKER_KINDS,
     TILE_SETS,
     countUsage,
     formatBudget,
@@ -35,6 +37,7 @@ import {
     remainingOf,
     tileKindOfValue,
     ZONE_KINDS,
+    zoneSwatch,
     zoneAtTile,
     zoneKindById,
     type BudgetKey,
@@ -282,7 +285,7 @@ function moveMarker(
     // One object per tile. Silent while dragging, so sweeping across an
     // occupied tile does not spam the toast.
     if (marker.fixed) {
-        if (notify) showToast(`${marker.label} is part of the fixed enemy house`);
+        if (notify) showToast(`${marker.label} cannot be moved — ${FIXED_SPAWN_HINT}`);
         return false;
     }
 
@@ -384,6 +387,10 @@ function applyToolDown(state: EditorState, cell: { x: number; y: number }): bool
             return floodFill(state, x, y);
         case 'move': {
             const grabbed = markerAtTile(state.level, x, y);
+            if (grabbed?.fixed) {
+                showToast(`${grabbed.label} cannot be moved — ${FIXED_SPAWN_HINT}`);
+                return false;
+            }
             if (grabbed) {
                 // Pick it up where it stands — dragging moves it from here.
                 // With one object to a tile, holding something else and
@@ -649,21 +656,16 @@ function drawEditorOverlay(state: EditorState, ctx: CanvasRenderingContext2D): v
 
     drawTunnelOverlay(ctx, state);
 
-    // Slow tiles — wherever they are, not just on the tunnel row
-    ctx.save();
-    ctx.fillStyle = 'rgba(255,176,64,0.22)';
-    for (const t of lv.tunnelSlowTiles) {
-        ctx.fillRect(t.x * unit, t.y * unit, unit, unit);
+    // Zone washes, in ZONE_KINDS order so the slow wash sits under the no-up one.
+    // The colour comes from the same place the panel swatches read it.
+    for (const zone of ZONE_KINDS) {
+        ctx.save();
+        ctx.fillStyle = zone.overlay;
+        for (const t of zone.tiles(lv)) {
+            ctx.fillRect(t.x * unit, t.y * unit, unit, unit);
+        }
+        ctx.restore();
     }
-    ctx.restore();
-
-    // Red zone tile markers
-    ctx.save();
-    ctx.fillStyle = 'rgba(255,0,0,0.28)';
-    for (const t of lv.redZoneTiles) {
-        ctx.fillRect(t.x * unit, t.y * unit, unit, unit);
-    }
-    ctx.restore();
 
     // Enemy door tiles
     ctx.save();
@@ -1201,7 +1203,7 @@ const TABS: Array<{ id: string; icon: string; label: string; title: string }> = 
     { id: 'paint',   icon: '▦',  label: 'Paint',   title: 'Tile palette and paint tools' },
     { id: 'brush',   icon: '⌗',  label: 'Brush',   title: 'Brush size and mirroring' },
     { id: 'objects', icon: '✥',  label: 'Objects', title: 'Spawns and scatter targets' },
-    { id: 'zones',   icon: '⊕',  label: 'Zones',   title: 'Red zones, slow tiles, tunnel row' },
+    { id: 'zones',   icon: '⊕',  label: 'Zones',   title: 'Enemy no-up and slow zones, and where the maze wraps' },
     { id: 'level',   icon: '✔',  label: 'Level',   title: 'Name, tile set, budgets, validation' },
     { id: 'more',    icon: '☰',  label: 'More',    title: 'Library, files and shortcuts' },
 ];
@@ -1211,6 +1213,12 @@ const TOOL_TAB: Record<EditorTool, string> = {
     paint: 'paint', erase: 'paint', fill: 'paint',
     move: 'objects',
     red_zone: 'zones', slow_zone: 'zones',
+};
+
+/** Button id per zone — the zone tools are also entries in TOOL_BUTTONS. */
+const ZONE_BUTTON_ID: Record<ZoneKindId, string> = {
+    red_zone:  'ed-tool-redzone',
+    slow_zone: 'ed-tool-slowzone',
 };
 
 const TOOL_BUTTONS: Array<{ tool: EditorTool; id: string }> = [
@@ -1326,6 +1334,15 @@ const PANEL_CSS = `
     width: 18px; height: 18px; border-radius: 3px; border: 1px solid #777; flex-shrink: 0;
 }
 #editor-panel .ed-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+/* Bigger than a palette swatch with a dimmer edge: the zone washes are dark by
+   design, so a bright 1px border would read louder than the colour itself. */
+#editor-panel .ed-zone-swatch {
+    width: 26px; height: 26px; border-color: rgba(255,255,255,0.3);
+}
+#editor-panel .ed-zone-label {
+    flex: 1; min-width: 0; text-align: left;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 #editor-panel .ed-objects button {
     flex-direction: column; align-items: center; justify-content: center;
     gap: 0; padding: 2px; text-align: center;
@@ -1427,6 +1444,7 @@ interface PanelRefs {
     budgets: HTMLElement;
     palette: HTMLElement;
     markers: HTMLElement;
+    zones: HTMLElement;
     info: HTMLElement;
     validateResult: HTMLElement;
     libCount: HTMLButtonElement;
@@ -1504,17 +1522,15 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
                     <label><input type="checkbox" id="ed-half"> Half-tile</label>
                 </div>
                 <div class="ed-grid ed-objects" id="ed-markers" role="group" aria-label="Movable objects" style="--col: 58px"></div>
+                <p class="ed-desc">
+                    The four enemy spawns are not listed — the game spawns them at
+                    fixed positions inside the house and cannot be told otherwise.
+                    They are still drawn on the maze.
+                </p>
             </section>
 
             <section id="ed-panel-zones" class="ed-tab-panel" role="tabpanel" aria-labelledby="ed-tab-zones" hidden>
-                <div class="ed-grid" style="--col: 116px">
-                    <button id="ed-tool-redzone" aria-pressed="false" title="Paint junctions where enemies may not turn up — Erase clears them (R)">
-                        ⊕ Red zone<span class="ed-count" id="ed-rz-count"></span>
-                    </button>
-                    <button id="ed-tool-slowzone" aria-pressed="false" title="Paint tiles where enemies crawl — Erase clears them (S)">
-                        ⌁ Slow tiles<span class="ed-count" id="ed-slow-count"></span>
-                    </button>
-                </div>
+                <div class="ed-grid" id="ed-zones" role="group" aria-label="Zones" style="--col: 152px"></div>
                 <p class="ed-desc" id="ed-tunnel-desc"></p>
             </section>
 
@@ -1541,7 +1557,7 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
                     <li><kbd>1</kbd>–<kbd>5</kbd> pick a tile</li>
                     <li><kbd>B</kbd> paint · <kbd>E</kbd> erase · <kbd>F</kbd> fill</li>
                     <li><kbd>M</kbd> move objects · arrows nudge</li>
-                    <li><kbd>R</kbd> red zone · <kbd>S</kbd> slow tiles</li>
+                    <li><kbd>R</kbd> no-up zone · <kbd>S</kbd> slow zone</li>
                     <li><kbd>[</kbd> <kbd>]</kbd> brush size · <kbd>X</kbd> cycle mirror</li>
                     <li><kbd>G</kbd> grid · <kbd>H</kbd> hide panel</li>
                     <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo</li>
@@ -1568,6 +1584,7 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
         budgets:        el('ed-budgets'),
         palette:        el('ed-palette'),
         markers:        el('ed-markers'),
+        zones:          el('ed-zones'),
         info:           el('ed-info'),
         validateResult: el('ed-validate-result'),
         libCount:       el<HTMLButtonElement>('ed-open-lib'),
@@ -1656,6 +1673,20 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
         brushRow.appendChild(button);
     }
 
+    // Zone tools — swatch first, so the button shows the wash it paints
+    for (const zone of ZONE_KINDS) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.id = ZONE_BUTTON_ID[zone.id];
+        button.setAttribute('aria-pressed', 'false');
+        button.title = `${zone.hint} — Erase clears them (${zone.key})`;
+        button.innerHTML = `
+            <span class="ed-swatch-box ed-zone-swatch" style="background:${zoneSwatch(zone.overlay)}"></span>
+            <span class="ed-zone-label">${zone.label}</span>
+            <span class="ed-count" data-zone="${zone.id}"></span>`;
+        ui.zones.appendChild(button);
+    }
+
     // Tool buttons
     for (const { tool, id } of TOOL_BUTTONS) {
         const button = el<HTMLButtonElement>(id);
@@ -1663,7 +1694,7 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
     }
 
     // Movable objects
-    for (const marker of MARKER_KINDS) {
+    for (const marker of PLACEABLE_MARKER_KINDS) {
         const button = document.createElement('button');
         button.type = 'button';
         button.id = `ed-marker-${marker.id}`;
@@ -1869,7 +1900,7 @@ function refreshReadouts(state: EditorState): void {
     });
 
     // Movable objects: which one is held, and where each sits
-    for (const marker of MARKER_KINDS) {
+    for (const marker of PLACEABLE_MARKER_KINDS) {
         const button = document.getElementById(`ed-marker-${marker.id}`);
         if (!button) continue;
         button.setAttribute('aria-pressed', String(state.armedMarker === marker.id));
@@ -1878,8 +1909,10 @@ function refreshReadouts(state: EditorState): void {
     }
 
     // Zones
-    el('ed-rz-count').textContent   = formatBudget(state.usage.red_zone,  tileSet.budgets.red_zone);
-    el('ed-slow-count').textContent = formatBudget(state.usage.slow_zone, tileSet.budgets.slow_zone);
+    for (const zone of ZONE_KINDS) {
+        const count = document.querySelector<HTMLElement>(`.ed-count[data-zone="${zone.id}"]`);
+        if (count) count.textContent = formatBudget(state.usage[zone.id], tileSet.budgets[zone.id]);
+    }
     const wrapRows: number[] = [];
     for (let row = 0; row < gridH; row++) {
         if (Levels.wrapsAt(state.level, row)) wrapRows.push(row);
@@ -1889,7 +1922,8 @@ function refreshReadouts(state: EditorState): void {
         : `Wraps on row${wrapRows.length === 1 ? '' : 's'} ${wrapRows.join(', ')} — `
             + 'a row wraps wherever both of its end tiles are walkable, so open an '
             + 'edge to make one. ')
-        + 'Amber tiles are slow tiles. Tap a marked tile again to clear it, or use Erase.';
+        + 'Each zone paints the tile the colour on its button. Tap a marked tile '
+        + 'again to clear it, or use Erase.';
 
     // Tabs
     for (const tab of TABS) {
@@ -1916,8 +1950,8 @@ function toolSummary(state: EditorState): string {
         case 'move':  return state.armedMarker
             ? `Place ${markerById(state.armedMarker).label}`
             : 'Move objects';
-        case 'red_zone':      return 'Red zone';
-        case 'slow_zone':     return 'Slow tiles';
+        case 'red_zone':
+        case 'slow_zone':     return `Paint ${zoneKindById(state.selectedTool).label}`;
     }
 }
 
