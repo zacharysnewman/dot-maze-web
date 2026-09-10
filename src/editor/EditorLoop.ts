@@ -26,6 +26,7 @@ import {
     BUDGET_ROWS,
     MARKER_KINDS,
     PAINTABLE_TILE_KINDS,
+    PLACEABLE_MARKER_KINDS,
     TILE_SETS,
     countUsage,
     formatBudget,
@@ -384,6 +385,10 @@ function applyToolDown(state: EditorState, cell: { x: number; y: number }): bool
             return floodFill(state, x, y);
         case 'move': {
             const grabbed = markerAtTile(state.level, x, y);
+            if (grabbed?.fixed) {
+                showToast(`${grabbed.label} is part of the fixed enemy house`);
+                return false;
+            }
             if (grabbed) {
                 // Pick it up where it stands — dragging moves it from here.
                 // With one object to a tile, holding something else and
@@ -1504,6 +1509,11 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
                     <label><input type="checkbox" id="ed-half"> Half-tile</label>
                 </div>
                 <div class="ed-grid ed-objects" id="ed-markers" role="group" aria-label="Movable objects" style="--col: 58px"></div>
+                <p class="ed-desc">
+                    The four enemy spawns are not listed — they sit in the fixed
+                    enemy house, which the game navigates by hardcoded
+                    coordinates. They are still drawn on the maze.
+                </p>
             </section>
 
             <section id="ed-panel-zones" class="ed-tab-panel" role="tabpanel" aria-labelledby="ed-tab-zones" hidden>
@@ -1663,7 +1673,7 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
     }
 
     // Movable objects
-    for (const marker of MARKER_KINDS) {
+    for (const marker of PLACEABLE_MARKER_KINDS) {
         const button = document.createElement('button');
         button.type = 'button';
         button.id = `ed-marker-${marker.id}`;
@@ -1869,7 +1879,7 @@ function refreshReadouts(state: EditorState): void {
     });
 
     // Movable objects: which one is held, and where each sits
-    for (const marker of MARKER_KINDS) {
+    for (const marker of PLACEABLE_MARKER_KINDS) {
         const button = document.getElementById(`ed-marker-${marker.id}`);
         if (!button) continue;
         button.setAttribute('aria-pressed', String(state.armedMarker === marker.id));

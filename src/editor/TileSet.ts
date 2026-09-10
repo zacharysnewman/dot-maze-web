@@ -168,6 +168,15 @@ export const MARKER_KINDS: readonly MarkerKind[] = [
     },
 ] as const;
 
+/**
+ * The objects the Objects list offers. Fixed markers are left out: they live in
+ * the enemy house, which the editor cannot change, so a button for them would
+ * only ever refuse. They are still drawn on the canvas and still block other
+ * objects from being dropped on their tile.
+ */
+export const PLACEABLE_MARKER_KINDS: readonly MarkerKind[] =
+    MARKER_KINDS.filter(m => !m.fixed);
+
 export function markerById(id: MarkerKindId): MarkerKind {
     return MARKER_KINDS.find(m => m.id === id)!;
 }

@@ -77,9 +77,14 @@ There is exactly one of each and it can never be duplicated or deleted:
 | Object | What it is |
 |---|---|
 | **P Player** | Where the player starts each life |
-| **R / C / H / O** | The four enemy starting points |
 | **F Fruit** | Where bonus fruit appears |
 | **✕ ×4** | Each enemy's scatter-mode corner target |
+| **R / C / H / O** | The four enemy starting points — *fixed, not listed* |
+
+The four enemy spawns are **not in the Objects list**. They sit in the fixed
+enemy house, so a button for them could only ever refuse the click. They are
+still drawn on the maze, they still stop another object being dropped on their
+tile, and the move tool says so if you try to pick one up.
 
 With the **✥ Move objects** tool you drag any of them straight on the maze.
 Clicking an object in the **Objects** list arms it — the next tap on the maze
@@ -162,7 +167,8 @@ red-zone toggling too, and every mirrored tile draws from the same budget.
 
 The enemy house is **not editable**. Columns 10–17, rows 14–19 are locked the
 same way the HUD rows are: paint, erase, fill and the zone tools all refuse a
-click there, and the four enemy spawns inside it cannot be dragged or nudged.
+click there, and the four enemy spawns inside it are gone from the Objects list
+— they cannot be armed, dragged or nudged.
 
 The box covers the whole structure rather than just its interior: row 14 is the
 corridor enemies exit onto, and rows 18–19 are the bottom wall, two tiles thick
