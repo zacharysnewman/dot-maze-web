@@ -1,7 +1,15 @@
 import { gridW, gridH } from '../constants';
 import type { LevelData } from '../types';
 import { TILE_WALL, TILE_DOT, TILE_POWER } from '../tiles';
-import { EDIT_MAX_Y, EDIT_MIN_Y, isReservedRow } from './Bounds';
+import {
+    EDIT_MAX_Y,
+    EDIT_MIN_Y,
+    HOUSE_MAX_X,
+    HOUSE_MIN_X,
+    HOUSE_MIN_Y,
+    isEnemyHouseTile,
+    isReservedRow,
+} from './Bounds';
 import {
     BUDGET_ROWS,
     countUsage,
@@ -25,6 +33,30 @@ function isWalkable(level: LevelData, x: number, y: number): boolean {
     const tx = Math.round(x);
     const ty = Math.round(y);
     return tx >= 0 && tx < gridW && ty >= 0 && ty < gridH && level.tiles[ty][tx] > TILE_WALL;
+}
+
+/** Where `Move.enemyExit` parks an enemy once it clears the door. */
+const HOUSE_EXIT = { x: 13, y: HOUSE_MIN_Y };
+
+/**
+ * Enemies resume normal movement from the house exit tile, so the maze has to
+ * offer them a way out of the locked enclosure. Walk out from the exit and see
+ * whether any tile beyond the house is reachable.
+ */
+function houseExitEscapes(level: LevelData): boolean {
+    if (!isWalkable(level, HOUSE_EXIT.x, HOUSE_EXIT.y)) return false;
+    const seen = new Set<string>();
+    const queue = [HOUSE_EXIT];
+    while (queue.length > 0) {
+        const { x, y } = queue.shift()!;
+        const key = `${x},${y}`;
+        if (seen.has(key)) continue;
+        if (!isWalkable(level, x, y)) continue;
+        seen.add(key);
+        if (!isEnemyHouseTile(x, y)) return true;
+        queue.push({ x: x - 1, y }, { x: x + 1, y }, { x, y: y - 1 }, { x, y: y + 1 });
+    }
+    return false;
 }
 
 export function validateLevel(level: LevelData, tileSet?: TileSet): ValidationResult {
@@ -163,12 +195,19 @@ export function validateLevel(level: LevelData, tileSet?: TileSet): ValidationRe
         }
     }
 
-    // 10. Ghost house sanity
+    // 10. Enemy house sanity
     if (usage.door === 0) {
-        warnings.push('No ghost door tiles — ghosts will not have a gate to pass through');
+        warnings.push('No enemy door tiles — enemies will not have a gate to pass through');
+    }
+    if (!houseExitEscapes(level)) {
+        errors.push(
+            `Enemies leave the house at (${HOUSE_EXIT.x}, ${HOUSE_EXIT.y}) and cannot get out — `
+            + `wall off fewer tiles around columns ${HOUSE_MIN_X}\u2013${HOUSE_MAX_X}, `
+            + `row ${HOUSE_MIN_Y}`,
+        );
     }
     if (powerDots === 0) {
-        warnings.push('No power pellets — ghosts can never be frightened');
+        warnings.push('No power pellets — enemies can never be frightened');
     }
 
     // 11. Collectibles hidden under the HUD (possible in imported levels — the

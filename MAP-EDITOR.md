@@ -25,12 +25,12 @@ layers never mix.
 
 | Layer | Contents | Rule |
 |---|---|---|
-| **Tiles** (`tiles[y][x]`) | Wall, Empty, Dot, Power, Ghost door | Exactly one value per tile. Painting replaces what was there. |
+| **Tiles** (`tiles[y][x]`) | Wall, Empty, Dot, Power, Enemy door | Exactly one value per tile. Painting replaces what was there. |
 | **Zones** (coordinate lists) | Red zone, Slow tile | At most one zone per tile. Painting one displaces the other. |
-| **Objects** (coordinates) | Player, 4 ghost starts, fruit, 4 scatter targets | One object per tile. A drop onto an occupied tile is refused. |
+| **Objects** (coordinates) | Player, 4 enemy starts, fruit, 4 scatter targets | One object per tile. A drop onto an occupied tile is refused. |
 
 Zones and objects sit *on top of* a tile, so a dot can be a red zone, and a
-ghost can start on a slow tile — the built-in level itself puts two of its four
+enemy can start on a slow tile — the built-in level itself puts two of its four
 red zones on dot tiles. What cannot happen is two of the same layer on one tile.
 
 An object on a half-tile (`x.5`) straddles two columns and holds both, which is
@@ -47,14 +47,15 @@ stock as the main map instead of drifting into something unplayable. Budgets
 are an **editor-side constraint only** — the saved JSON, the level format and
 the game logic are untouched.
 
-| Tile set | Dots | Power | Ghost doors | Red zones | Slow tiles | Walls / Empty |
-|---|---|---|---|---|---|---|
-| **Classic** (default) | 240 | 4 | 2 | ∞ | ∞ | ∞ |
-| **Extended** | 360 | 8 | 4 | ∞ | ∞ | ∞ |
-| **Sandbox** | ∞ | ∞ | ∞ | ∞ | ∞ | ∞ |
+| Tile set | Dots | Power | Red zones | Slow tiles | Walls / Empty |
+|---|---|---|---|---|---|
+| **Classic** (default) | 240 | 4 | ∞ | ∞ | ∞ |
+| **Extended** | 360 | 8 | ∞ | ∞ | ∞ |
+| **Sandbox** | ∞ | ∞ | ∞ | ∞ | ∞ |
 
-Zones and tunnel rows are a design choice rather than a stock of pieces, so
-they are counted but never capped.
+Zones are a design choice rather than a stock of pieces, so they are counted
+but never capped. Enemy doors have no row: they only exist inside the fixed
+enemy house, which cannot be edited.
 
 - Classic's numbers are read from the built-in map at startup, so they cannot
   drift out of sync with it.
@@ -76,19 +77,21 @@ There is exactly one of each and it can never be duplicated or deleted:
 | Object | What it is |
 |---|---|
 | **P Player** | Where the player starts each life |
-| **R / C / H / O** | The four ghost starting points |
+| **R / C / H / O** | The four enemy starting points |
 | **F Fruit** | Where bonus fruit appears |
-| **✕ ×4** | Each ghost's scatter-mode corner target |
+| **✕ ×4** | Each enemy's scatter-mode corner target |
 
 With the **✥ Move objects** tool you drag any of them straight on the maze.
 Clicking an object in the **Objects** list arms it — the next tap on the maze
 places it — and arrow keys nudge the armed object one tile at a time. The list
 shows each object's live coordinates. **Drop on half-tile** places on `x.5`
-(the Classic player and red ghost sit on half-tiles).
+(the Classic player and red enemy sit on half-tiles).
 
-The ghost-house gate is a **tile** now (budget 2 in Classic), painted like any
-other. The level's `enemyHouseDoor` coordinate is kept in sync automatically,
-so the saved JSON is unchanged.
+The enemy-house gate is a **tile** (value `2`), but it is not in the palette:
+it only works where the game expects it, inside the fixed enemy house (see
+[The fixed enemy house](#the-fixed-enemy-house)). The level's `enemyHouseDoor`
+coordinate is kept in sync with the painted door tiles automatically, so the
+saved JSON is unchanged.
 
 ### Tile Painting
 
@@ -98,7 +101,7 @@ so the saved JSON is unchanged.
 | **Erase** | Click/drag to set tiles to Empty | `E` |
 | **Flood Fill** | Click any tile to BFS-fill all contiguous matching tiles | `F` |
 | **Move objects** | Drag spawns and scatter targets | `M` |
-| **Red zone** | Click/drag to toggle junctions where ghosts can't turn up | `R` |
+| **Red zone** | Click/drag to toggle junctions where enemies can't turn up | `R` |
 | **Slow tiles** | Click/drag to toggle tiles where enemies crawl | `S` |
 
 **Erase** clears whatever is on a tile — the tile itself *and* any zone on it.
@@ -130,7 +133,9 @@ Tile types in the palette:
 | Empty | `5` | Open corridor, no collectible | `2` |
 | Dot  | `3` | Small pellet — counts toward level clear | `3` |
 | Power | `4` | Power pellet — triggers frightened mode | `4` |
-| Ghost Door | `2` | Ghost-house gate — only entering/exiting ghosts pass | `5` |
+
+Value `2` (the enemy-house gate) is a real tile the editor counts and draws,
+but it has no palette entry — it belongs to the fixed enemy house.
 
 **Brush size** paints 1×1, 2×2 or 3×3 at once (`[` and `]`).
 
@@ -153,6 +158,35 @@ nowhere to land; **Diag** mirrors through the centre point (a 180° rotation),
 which is the diagonal symmetry a rectangular maze can hold. Mirroring applies to
 red-zone toggling too, and every mirrored tile draws from the same budget.
 
+### The fixed enemy house
+
+The enemy house is **not editable**. Columns 10–17, rows 14–19 are locked the
+same way the HUD rows are: paint, erase, fill and the zone tools all refuse a
+click there, and the four enemy spawns inside it cannot be dragged or nudged.
+
+The box covers the whole structure rather than just its interior: row 14 is the
+corridor enemies exit onto, and rows 18–19 are the bottom wall, two tiles thick
+like every other wall in the maze.
+
+That is not a style choice — the game navigates the house by hardcoded pixel
+coordinates, so a house built anywhere else breaks the moment an enemy is eaten:
+
+| Behaviour | Hardcoded to | Source |
+|---|---|---|
+| Eyes return target | tile (13, 14) | `AI.EYES_TARGET` |
+| Eyes descend into the house | column 13, down to row 17 | `Move.enemyEnter` |
+| Idle bobbing inside the house | between rows 16 and 17 | `Move.enemyBounce` |
+| Per-colour resting columns | 12 (cyan), 13.5 (red/pink), 15 (orange) | `Move.enemyEnter` |
+| Leaving the house | up column 13 to row 14 | `Move.enemyExit` |
+
+The bounds live in `src/editor/Bounds.ts` (`HOUSE_MIN_X` … `HOUSE_MAX_Y`,
+`isEnemyHouseTile`), so if the game's house navigation is ever made
+data-driven, unlocking the region is a one-file change.
+
+What you *can* still do is wall off the corridor the house opens onto — so
+validation checks that enemies leaving at (13, 14) can reach a tile outside the
+enclosure, and reports an error if they cannot.
+
 ### Canvas overlay
 
 - **Map bounds** — a white rectangle around the whole 28 × 36 grid, with a
@@ -162,16 +196,19 @@ red-zone toggling too, and every mirrored tile draws from the same budget.
   refused there. Columns are never clipped — the tunnel has to wrap through
   columns 0 and 27. Movable objects are exempt, so scatter targets can still sit
   in those rows; the built-in level parks two of them on row 0.
+- **Enemy house** — the fixed enclosure at columns 10–17, rows 14–19 is
+  hatched and labelled *ENEMY HOUSE — FIXED*. Tiles, zones and the four enemy
+  spawns inside it are all refused, with a toast saying why.
 - **Grid** — guide lines, toggled from the toolbar or with `G`.
 - **Tunnel** — cyan boxes with outward arrows on the tiles that wrap, on every
   row that has walkable tiles at both ends, with a dashed centre line marking
   the row; amber tint on the slow tiles. Selecting the tunnel tool lights up the whole row, since that is what
   a click is about to change.
-- Red-zone tint, ghost-door outlines, mirror guides.
+- Red-zone tint, enemy-door outlines, mirror guides.
 - Object markers, with a dashed ring around the armed one.
 - Hover preview of the exact cells the brush will paint.
 
-Walls, dots and the ghost-house gate are drawn from the level being edited, so
+Walls, dots and the enemy-house gate are drawn from the level being edited, so
 the maze on screen is always the maze you are painting.
 
 ### Undo / Redo
@@ -195,7 +232,8 @@ Click **✔ Validate** to run all checks. Results appear inline in the panel.
 | 8 | BFS reachability — all dots must be reachable from player spawn (respects tunnel wrapping) |
 | 9 | Level name should not be empty (warning only) |
 | 10 | Nothing may exceed the current tile set's budget |
-| 11 | Ghost door tiles and power pellets should exist (warnings only) |
+| 11 | Enemy door tiles and power pellets should exist (warnings only) |
+| 11b | Enemies must be able to walk out of the enemy house — the exit at (13, 14) has to reach a tile outside the enclosure |
 | 12 | Pellets outside rows 2–34, hidden under the HUD (warning only) |
 | 13 | A tile marked as both a red zone and a slow tile (warning only) |
 | 14 | Two objects sharing a tile (warning only) |
@@ -291,7 +329,7 @@ Each entry shows:
 }
 ```
 
-`enemyHouseDoor` is derived from the painted ghost-door tiles rather than placed
+`enemyHouseDoor` is derived from the painted enemy-door tiles rather than placed
 separately, but it is still written out exactly as before.
 
 `tunnelSlowTiles` replaces the older `tunnelSlowColMax` / `tunnelSlowColMin`
@@ -390,7 +428,7 @@ panel to a floating ✏ button and gives the maze the whole screen.
 
 | Shortcut | Action |
 |---|---|
-| `1`–`5` | Pick a tile (wall, empty, dot, power, ghost door) |
+| `1`–`4` | Pick a tile (wall, empty, dot, power) |
 | `B` / `E` / `F` | Paint / Erase / Fill |
 | `M` | Move objects |
 | `R` / `S` / `T` | Red zone / Slow tiles / Tunnel row |
@@ -479,7 +517,7 @@ interface LevelData {
 | Feature | Status |
 |---|---|
 | Tile sets with per-tile budgets (`-1` = infinite) | ✅ Complete |
-| Dots / power / doors / red zones capped to main-map counts | ✅ Complete |
+| Dots / power capped to main-map counts | ✅ Complete |
 | Spawns and scatter targets as single movable objects | ✅ Complete |
 | Drag-to-move, arm-and-place, arrow-key nudging | ✅ Complete |
 | Brush sizes and 4-way mirror painting | ✅ Complete |
@@ -497,7 +535,7 @@ interface LevelData {
 | Undo / redo (50 steps) | ✅ Complete |
 | Grid overlay + brush-footprint hover preview | ✅ Complete |
 | Spawn placement (Player, 4 enemies, Fruit) | ✅ Complete |
-| Ghost house door as a budgeted tile | ✅ Complete |
+| Enemy house locked as an uneditable region | ✅ Complete |
 | Tunnel row configuration | ✅ Complete |
 | Red zone tile toggle | ✅ Complete |
 | Scatter target placement (per enemy) | ✅ Complete |

@@ -1,6 +1,6 @@
 import { unit, gridW, gridH } from '../constants';
 import type { IGameObject, Direction, PlayerState, TileValue } from '../types';
-import { TILE_GHOST_DOOR } from '../tiles';
+import { TILE_ENEMY_DOOR } from '../tiles';
 import { gameState } from '../game-state';
 import { Levels } from './Levels';
 import { Stats } from './Stats';
@@ -502,8 +502,8 @@ export class Draw {
         ctx.arc(x + unit, y, unit / 2, 0.5 * Math.PI, Math.PI, false);
     }
 
-    // Draws the gate line across each run of ghost-door tiles, so a custom
-    // ghost house gets its gate wherever the door tiles were placed.
+    // Draws the gate line across each run of enemy-door tiles, so a custom
+    // enemy house gets its gate wherever the door tiles were placed.
     static cageGate(): void {
         const ctx = gameState.ctx;
         const grid = Draw.wallGrid();
@@ -512,9 +512,9 @@ export class Draw {
         for (let y = 0; y < gridH; y++) {
             let x = 0;
             while (x < gridW) {
-                if (grid[y]?.[x] !== TILE_GHOST_DOOR) { x++; continue; }
+                if (grid[y]?.[x] !== TILE_ENEMY_DOOR) { x++; continue; }
                 let end = x;
-                while (end + 1 < gridW && grid[y][end + 1] === TILE_GHOST_DOOR) end++;
+                while (end + 1 < gridW && grid[y][end + 1] === TILE_ENEMY_DOOR) end++;
                 const lineY = (y + 1) * unit;
                 ctx.moveTo((x - 0.5) * unit, lineY);
                 ctx.lineTo((end + 1.5) * unit, lineY);
