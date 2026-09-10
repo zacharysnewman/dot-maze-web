@@ -44,14 +44,21 @@ export function isReservedRow(y: number): boolean {
  * first enemy is eaten and its eyes flew back to a wall, so the editor keeps
  * the whole enclosure — and the corridor its exit opens onto — as it is.
  */
-// The box covers the whole structure, not just its interior: row 14 is the
-// corridor enemies exit onto, and rows 18-19 are its bottom wall, which is two
-// tiles thick like every other wall in the maze. Leaving row 19 editable let
-// you paint a hole straight through the floor of the house.
+// The box covers the structure itself: the door row down to the bottom wall,
+// which is two tiles thick (rows 18-19) like every other wall in the maze.
+//
+// Row 14, the corridor enemies exit onto, is deliberately left editable — it
+// carries the red-zone pair at (12, 14) and (15, 14) that stops enemies turning
+// back up into the house, and those have to stay adjustable. What that row must
+// not lose is a way out: validation walks from the exit tile and errors if
+// enemies cannot reach anything beyond the house.
 export const HOUSE_MIN_X = 10;
 export const HOUSE_MAX_X = 17;
-export const HOUSE_MIN_Y = 14;
+export const HOUSE_MIN_Y = 15;
 export const HOUSE_MAX_Y = 19;
+
+/** Where `Move.enemyExit` leaves an enemy once it clears the door. */
+export const HOUSE_EXIT = { x: 13, y: HOUSE_MIN_Y - 1 };
 
 export function isEnemyHouseTile(x: number, y: number): boolean {
     return x >= HOUSE_MIN_X && x <= HOUSE_MAX_X && y >= HOUSE_MIN_Y && y <= HOUSE_MAX_Y;
@@ -59,6 +66,10 @@ export function isEnemyHouseTile(x: number, y: number): boolean {
 
 export const HOUSE_HINT =
     'The enemy house is fixed — the game navigates it by hardcoded coordinates';
+
+/** Shown when someone tries to move an enemy spawn. */
+export const FIXED_SPAWN_HINT =
+    'the game spawns enemies at fixed positions inside the house';
 
 export const RESERVED_ROWS_HINT =
     `Rows outside ${EDIT_MIN_Y}–${EDIT_MAX_Y} are covered by the score and lives display`;

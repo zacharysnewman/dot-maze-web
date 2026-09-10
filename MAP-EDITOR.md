@@ -165,14 +165,19 @@ red-zone toggling too, and every mirrored tile draws from the same budget.
 
 ### The fixed enemy house
 
-The enemy house is **not editable**. Columns 10–17, rows 14–19 are locked the
+The enemy house is **not editable**. Columns 10–17, rows 15–19 are locked the
 same way the HUD rows are: paint, erase, fill and the zone tools all refuse a
-click there, and the four enemy spawns inside it are gone from the Objects list
-— they cannot be armed, dragged or nudged.
+click there, and the four enemy spawns are gone from the Objects list — they
+cannot be armed, dragged or nudged wherever they sit.
 
-The box covers the whole structure rather than just its interior: row 14 is the
-corridor enemies exit onto, and rows 18–19 are the bottom wall, two tiles thick
-like every other wall in the maze.
+The box runs from the door row down to the bottom wall, which is two tiles
+thick (rows 18–19) like every other wall in the maze.
+
+**Row 14 — the corridor enemies exit onto — stays editable.** It carries the
+red-zone pair at (12, 14) and (15, 14) that stops enemies turning back up into
+the house, and those have to stay adjustable. Two validation rules guard it
+instead: the exit tile (13, 14) must not be walled in, and enemies standing on
+it must be able to reach something outside the house's footprint.
 
 That is not a style choice — the game navigates the house by hardcoded pixel
 coordinates, so a house built anywhere else breaks the moment an enemy is eaten:
@@ -202,7 +207,7 @@ enclosure, and reports an error if they cannot.
   refused there. Columns are never clipped — the tunnel has to wrap through
   columns 0 and 27. Movable objects are exempt, so scatter targets can still sit
   in those rows; the built-in level parks two of them on row 0.
-- **Enemy house** — the fixed enclosure at columns 10–17, rows 14–19 is
+- **Enemy house** — the fixed enclosure at columns 10–17, rows 15–19 is
   hatched and labelled *ENEMY HOUSE — FIXED*. Tiles, zones and the four enemy
   spawns inside it are all refused, with a toast saying why.
 - **Grid** — guide lines, toggled from the toolbar or with `G`.
@@ -239,7 +244,8 @@ Click **✔ Validate** to run all checks. Results appear inline in the panel.
 | 9 | Level name should not be empty (warning only) |
 | 10 | Nothing may exceed the current tile set's budget |
 | 11 | Enemy door tiles and power pellets should exist (warnings only) |
-| 11b | Enemies must be able to walk out of the enemy house — the exit at (13, 14) has to reach a tile outside the enclosure |
+| 11b | The enemy house exit (13, 14) must not be walled in |
+| 11c | Enemies standing on the exit must be able to reach a tile outside the house's footprint |
 | 12 | Pellets outside rows 2–34, hidden under the HUD (warning only) |
 | 13 | A tile marked as both a red zone and a slow tile (warning only) |
 | 14 | Two objects sharing a tile (warning only) |

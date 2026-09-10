@@ -11,6 +11,7 @@ import { loadPrefs, savePrefs } from './EditorPrefs';
 import {
     EDIT_MAX_Y,
     EDIT_MIN_Y,
+    FIXED_SPAWN_HINT,
     HOUSE_HINT,
     HOUSE_MAX_X,
     HOUSE_MAX_Y,
@@ -283,7 +284,7 @@ function moveMarker(
     // One object per tile. Silent while dragging, so sweeping across an
     // occupied tile does not spam the toast.
     if (marker.fixed) {
-        if (notify) showToast(`${marker.label} is part of the fixed enemy house`);
+        if (notify) showToast(`${marker.label} cannot be moved — ${FIXED_SPAWN_HINT}`);
         return false;
     }
 
@@ -386,7 +387,7 @@ function applyToolDown(state: EditorState, cell: { x: number; y: number }): bool
         case 'move': {
             const grabbed = markerAtTile(state.level, x, y);
             if (grabbed?.fixed) {
-                showToast(`${grabbed.label} is part of the fixed enemy house`);
+                showToast(`${grabbed.label} cannot be moved — ${FIXED_SPAWN_HINT}`);
                 return false;
             }
             if (grabbed) {
@@ -1510,9 +1511,9 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
                 </div>
                 <div class="ed-grid ed-objects" id="ed-markers" role="group" aria-label="Movable objects" style="--col: 58px"></div>
                 <p class="ed-desc">
-                    The four enemy spawns are not listed — they sit in the fixed
-                    enemy house, which the game navigates by hardcoded
-                    coordinates. They are still drawn on the maze.
+                    The four enemy spawns are not listed — the game spawns them at
+                    fixed positions inside the house and cannot be told otherwise.
+                    They are still drawn on the maze.
                 </p>
             </section>
 
