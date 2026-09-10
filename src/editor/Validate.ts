@@ -136,12 +136,14 @@ export function validateLevel(level: LevelData, tileSet?: TileSet): ValidationRe
         );
     }
 
-    // 6b. Slow tiles on walls do nothing — enemies can never stand there
+    // 6b. Slow zones on walls do nothing — enemies can never stand there
     const strandedSlow = level.tunnelSlowTiles.filter(
         t => !isWalkable(level, t.x, t.y),
     ).length;
     if (strandedSlow > 0) {
-        warnings.push(`${strandedSlow} slow tile(s) sit on walls, where no enemy can reach them`);
+        warnings.push(
+            `${strandedSlow} slow-zone tile(s) sit on walls, where no enemy can reach them`,
+        );
     }
 
     // 7. BFS reachability from player start (respect tunnel wrapping)
@@ -244,7 +246,7 @@ export function validateLevel(level: LevelData, tileSet?: TileSet): ValidationRe
     const redKeys = new Set(level.redZoneTiles.map(t => `${t.x},${t.y}`));
     const doubleZoned = level.tunnelSlowTiles.filter(t => redKeys.has(`${t.x},${t.y}`)).length;
     if (doubleZoned > 0) {
-        warnings.push(`${doubleZoned} tile(s) are marked as both a red zone and a slow tile`);
+        warnings.push(`${doubleZoned} tile(s) carry both zones`);
     }
 
     // 13. One movable object to a tile

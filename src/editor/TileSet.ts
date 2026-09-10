@@ -233,20 +233,36 @@ export function emptyUsage(): Usage {
 export const ZONE_KINDS: readonly {
     id: ZoneKindId;
     label: string;
+    /** The wash painted over the tile on the canvas. Also drives the swatch. */
+    overlay: string;
     hint: string;
+    key: string;
     tiles(level: LevelData): Array<{ x: number; y: number }>;
 }[] = [
     {
-        id: 'red_zone', label: 'Red zone',
+        id: 'red_zone', label: 'Enemy no-up zone', overlay: 'rgba(255,0,0,0.28)',
         hint: 'Junctions where enemies may not turn upward in scatter or chase mode',
+        key: 'R',
         tiles: lv => lv.redZoneTiles,
     },
     {
-        id: 'slow_zone', label: 'Slow tiles',
+        id: 'slow_zone', label: 'Enemy slow zone', overlay: 'rgba(255,176,64,0.22)',
         hint: 'Tiles where enemies crawl — the warp-tunnel mouths',
+        key: 'S',
         tiles: lv => lv.tunnelSlowTiles,
     },
 ] as const;
+
+/**
+ * A zone's swatch: the same wash over the same dark ground the maze uses, so
+ * the button reads as the colour the tile will actually take.
+ */
+export function zoneSwatch(overlay: string): string {
+    return `linear-gradient(${overlay}, ${overlay}), ${MAZE_GROUND}`;
+}
+
+/** The canvas background the zone washes are composited over (`Draw.background`). */
+export const MAZE_GROUND = '#000000';
 
 export function zoneKindById(id: ZoneKindId): (typeof ZONE_KINDS)[number] {
     return ZONE_KINDS.find(z => z.id === id)!;
@@ -364,7 +380,7 @@ export function formatBudget(used: number, budget: number): string {
 export const BUDGET_ROWS: readonly { key: BudgetKey; label: string }[] = [
     { key: 'dot',      label: 'Dots'      },
     { key: 'power',    label: 'Power'     },
-    { key: 'red_zone',  label: 'Red zones' },
-    { key: 'slow_zone', label: 'Slow tiles' },
+    { key: 'red_zone',  label: 'No-up zones' },
+    { key: 'slow_zone', label: 'Slow zones' },
     { key: 'wall',      label: 'Walls'     },
 ] as const;

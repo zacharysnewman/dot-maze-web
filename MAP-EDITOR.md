@@ -26,12 +26,12 @@ layers never mix.
 | Layer | Contents | Rule |
 |---|---|---|
 | **Tiles** (`tiles[y][x]`) | Wall, Empty, Dot, Power, Enemy door | Exactly one value per tile. Painting replaces what was there. |
-| **Zones** (coordinate lists) | Red zone, Slow tile | At most one zone per tile. Painting one displaces the other. |
+| **Zones** (coordinate lists) | Enemy no-up zone, Enemy slow zone | At most one zone per tile. Painting one displaces the other. |
 | **Objects** (coordinates) | Player, 4 enemy starts, fruit, 4 scatter targets | One object per tile. A drop onto an occupied tile is refused. |
 
-Zones and objects sit *on top of* a tile, so a dot can be a red zone, and a
-enemy can start on a slow tile — the built-in level itself puts two of its four
-red zones on dot tiles. What cannot happen is two of the same layer on one tile.
+Zones and objects sit *on top of* a tile, so a dot can be a no-up zone, and an
+enemy can start on a slow zone — the built-in level itself puts two of its four
+no-up zones on dot tiles. What cannot happen is two of the same layer on one tile.
 
 An object on a half-tile (`x.5`) straddles two columns and holds both, which is
 how it is drawn and how collisions are judged.
@@ -47,7 +47,7 @@ stock as the main map instead of drifting into something unplayable. Budgets
 are an **editor-side constraint only** — the saved JSON, the level format and
 the game logic are untouched.
 
-| Tile set | Dots | Power | Red zones | Slow tiles | Walls / Empty |
+| Tile set | Dots | Power | No-up zones | Slow zones | Walls / Empty |
 |---|---|---|---|---|---|
 | **Classic** (default) | 240 | 4 | ∞ | ∞ | ∞ |
 | **Extended** | 360 | 8 | ∞ | ∞ | ∞ |
@@ -106,8 +106,8 @@ saved JSON is unchanged.
 | **Erase** | Click/drag to set tiles to Empty | `E` |
 | **Flood Fill** | Click any tile to BFS-fill all contiguous matching tiles | `F` |
 | **Move objects** | Drag spawns and scatter targets | `M` |
-| **Red zone** | Click/drag to toggle junctions where enemies can't turn up | `R` |
-| **Slow tiles** | Click/drag to toggle tiles where enemies crawl | `S` |
+| **Enemy no-up zone** | Click/drag to toggle junctions where enemies can't turn up | `R` |
+| **Enemy slow zone** | Click/drag to toggle tiles where enemies crawl | `S` |
 
 **Erase** clears whatever is on a tile — the tile itself *and* any zone on it.
 Tapping a marked tile with its own zone tool also removes just that zone.
@@ -123,8 +123,8 @@ The editor draws the wrap points it finds, and the Zones tab lists the rows that
 wrap. Validation warns about a row open at one edge only, which is a dead end
 rather than a tunnel.
 
-**Slow tiles** are the warp-tunnel mouths, where enemies move at a crawl. They
-are per-tile, like red zones: paint them anywhere, in any shape, not just on the
+**Enemy slow zones** are the warp-tunnel mouths, where enemies move at a crawl.
+They are per-tile, like no-up zones: paint them anywhere, in any shape, not just on the
 tunnel row. The built-in level marks the same twelve tiles the old
 `tunnelSlowColMax` / `tunnelSlowColMin` column bounds described (row 17, columns
 0–5 and 22–27), so the game plays exactly as before. Levels saved with the old
@@ -161,7 +161,7 @@ tile a stroke will touch.
 The grid is 28 × 36 — not square — so a corner-to-corner diagonal reflection has
 nowhere to land; **Diag** mirrors through the centre point (a 180° rotation),
 which is the diagonal symmetry a rectangular maze can hold. Mirroring applies to
-red-zone toggling too, and every mirrored tile draws from the same budget.
+zone toggling too, and every mirrored tile draws from the same budget.
 
 ### The fixed enemy house
 
@@ -174,7 +174,7 @@ The box runs from the door row down to the bottom wall, which is two tiles
 thick (rows 18–19) like every other wall in the maze.
 
 **Row 14 — the corridor enemies exit onto — stays editable.** It carries the
-red-zone pair at (12, 14) and (15, 14) that stops enemies turning back up into
+no-up zone pair at (12, 14) and (15, 14) that stops enemies turning back up into
 the house, and those have to stay adjustable. Two validation rules guard it
 instead: the exit tile (13, 14) must not be walled in, and enemies standing on
 it must be able to reach something outside the house's footprint.
@@ -213,9 +213,12 @@ enclosure, and reports an error if they cannot.
 - **Grid** — guide lines, toggled from the toolbar or with `G`.
 - **Tunnel** — cyan boxes with outward arrows on the tiles that wrap, on every
   row that has walkable tiles at both ends, with a dashed centre line marking
-  the row; amber tint on the slow tiles. Selecting the tunnel tool lights up the whole row, since that is what
+  the row. Selecting the tunnel tool lights up the whole row, since that is what
   a click is about to change.
-- Red-zone tint, enemy-door outlines, mirror guides.
+- **Zone washes** — each zone paints its tile the exact colour shown on its
+  button in the Zones tab. Button and canvas read the wash from one place
+  (`ZONE_KINDS[].overlay`), so they cannot drift apart.
+- Enemy-door outlines, mirror guides.
 - Object markers, with a dashed ring around the armed one.
 - Hover preview of the exact cells the brush will paint.
 
@@ -239,7 +242,7 @@ Click **✔ Validate** to run all checks. Results appear inline in the panel.
 | 4 | All enemy spawns must be on walkable tiles |
 | 5 | Fruit spawn should be on a walkable tile (warning only) |
 | 6 | A row open at one edge only is a dead end, not a tunnel (warning only) |
-| 7 | Slow tiles must not sit on walls, where no enemy can reach them (warning only) |
+| 7 | Slow-zone tiles must not sit on walls, where no enemy can reach them (warning only) |
 | 8 | BFS reachability — all dots must be reachable from player spawn (respects tunnel wrapping) |
 | 9 | Level name should not be empty (warning only) |
 | 10 | Nothing may exceed the current tile set's budget |
@@ -247,7 +250,7 @@ Click **✔ Validate** to run all checks. Results appear inline in the panel.
 | 11b | The enemy house exit (13, 14) must not be walled in |
 | 11c | Enemies standing on the exit must be able to reach a tile outside the house's footprint |
 | 12 | Pellets outside rows 2–34, hidden under the HUD (warning only) |
-| 13 | A tile marked as both a red zone and a slow tile (warning only) |
+| 13 | A tile carrying both zones (warning only) |
 | 14 | Two objects sharing a tile (warning only) |
 
 **✔ Validate** puts its verdict where it can be seen: a headline in the Level
@@ -381,10 +384,10 @@ only in a short side panel. **Hide** (`⌄` / `›`) points the way the panel go
 **Grid** (`⊞`) toggles the tile grid.
 
 The status line says what a click on the maze would do right now — "Paint Dot",
-"Place Fruit", "Slow tiles" — and switches to the tile under the pointer while
+"Place Fruit", "Paint Enemy slow zone" — and switches to the tile under the pointer while
 hovering, naming each layer on it.
 Choosing a tool from the keyboard brings its section forward: `S` opens Zones
-with Slow tiles selected, `3` opens Paint with Dot selected.
+with Enemy slow zone selected, `3` opens Paint with Dot selected.
 
 Controls sit in grids that reflow to the available width — four columns on a
 phone in portrait, two in the side panel — instead of one control per row.
@@ -443,7 +446,7 @@ panel to a floating ✏ button and gives the maze the whole screen.
 | `1`–`4` | Pick a tile (wall, empty, dot, power) |
 | `B` / `E` / `F` | Paint / Erase / Fill |
 | `M` | Move objects |
-| `R` / `S` / `T` | Red zone / Slow tiles / Tunnel row |
+| `R` / `S` | Enemy no-up zone / Enemy slow zone |
 | `[` / `]` | Brush size down / up |
 | `X` | Cycle mirror mode |
 | `G` | Toggle grid (also a toolbar button) |
@@ -549,7 +552,7 @@ interface LevelData {
 | Spawn placement (Player, 4 enemies, Fruit) | ✅ Complete |
 | Enemy house locked as an uneditable region | ✅ Complete |
 | Tunnel row configuration | ✅ Complete |
-| Red zone tile toggle | ✅ Complete |
+| Zone tile toggles, colour-matched to the canvas | ✅ Complete |
 | Scatter target placement (per enemy) | ✅ Complete |
 | Level name input | ✅ Complete |
 | Validation (BFS + all rules) | ✅ Complete |

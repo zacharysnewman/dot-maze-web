@@ -48,7 +48,7 @@ export function isReservedRow(y: number): boolean {
 // which is two tiles thick (rows 18-19) like every other wall in the maze.
 //
 // Row 14, the corridor enemies exit onto, is deliberately left editable — it
-// carries the red-zone pair at (12, 14) and (15, 14) that stops enemies turning
+// carries the no-up zone pair at (12, 14) and (15, 14) that stops enemies turning
 // back up into the house, and those have to stay adjustable. What that row must
 // not lose is a way out: validation walks from the exit tile and errors if
 // enemies cannot reach anything beyond the house.
