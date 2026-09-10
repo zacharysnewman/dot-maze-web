@@ -1,4 +1,5 @@
 import { gameState } from '../game-state';
+import { Levels } from './Levels';
 import { getDistance } from '../utils';
 import type { IGameObject, Direction } from '../types';
 
@@ -132,7 +133,7 @@ export class AI {
         if (gameState.debugEnabled) gameState.debugEnemyTargets[obj.color] = { x: targetX, y: targetY };
 
         // Treat undefined (off-grid) as passable on the tunnel row so enemies can wrap
-        const onTunnelRow = myY === gameState.currentLevel.tunnelRow;
+        const onTunnelRow = Levels.wrapsAt(gameState.currentLevel, myY);
         const inRedZone = (mode === 'scatter' || mode === 'chase') &&
             gameState.currentLevel.redZoneTiles.some(t => t.x === myX && t.y === myY);
         const canMoveLeft  = ((obj.leftObject()  ?? 0) > 2 || (onTunnelRow && obj.leftObject()  === undefined)) && obj.moveDir !== 'right';
@@ -191,7 +192,7 @@ export class AI {
     // PRNG-based random direction selection for frightened enemies
     static enemyFrightenedMove(obj: IGameObject): void {
         const allDirs: Direction[] = ['up', 'left', 'down', 'right'];
-        const onTunnelRow = obj.roundedY() === gameState.currentLevel.tunnelRow;
+        const onTunnelRow = Levels.wrapsAt(gameState.currentLevel, obj.roundedY());
         const canMove: Record<Direction, boolean> = {
             left:  ((obj.leftObject()  ?? 0) > 2 || (onTunnelRow && obj.leftObject()  === undefined)) && obj.moveDir !== 'right',
             right: ((obj.rightObject() ?? 0) > 2 || (onTunnelRow && obj.rightObject() === undefined)) && obj.moveDir !== 'left',

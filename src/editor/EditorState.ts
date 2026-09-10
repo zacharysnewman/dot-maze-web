@@ -7,7 +7,6 @@ export type EditorTool =
     | 'erase'
     | 'fill'
     | 'move'          // grab / place the single movable objects (spawns, targets)
-    | 'tunnel_config'
     | 'red_zone'
     | 'slow_zone';
 

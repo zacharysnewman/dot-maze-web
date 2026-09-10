@@ -157,11 +157,13 @@ export class Move {
         const speed = 2 * obj.moveSpeed;
         const minDistance = 1;
 
-        // Tunnel teleport
-        if (obj.moveDir === 'left' && obj.leftObject() === undefined) {
+        // Tunnel teleport — only where the row wraps, so walking off an edge
+        // whose far side is a wall cannot drop anyone inside it.
+        const wraps = Levels.wrapsAt(gameState.currentLevel, obj.roundedY());
+        if (wraps && obj.moveDir === 'left' && obj.leftObject() === undefined) {
             obj.x = (Levels.levelSetup[obj.roundedY()].length - 1) * unit + unit / 2;
         }
-        if (obj.moveDir === 'right' && obj.rightObject() === undefined) {
+        if (wraps && obj.moveDir === 'right' && obj.rightObject() === undefined) {
             obj.x = unit / 2;
         }
 

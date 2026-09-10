@@ -5,7 +5,7 @@ import { Draw } from '../static/Draw';
 import { exitTestGame, startTestGame, viewportSize } from '../Game';
 import type { LevelData, TileValue } from '../types';
 import { TILE_EMPTY, TILE_GHOST_DOOR } from '../tiles';
-import { validateLevel } from './Validate';
+import { validateLevel, type ValidationResult } from './Validate';
 import { saveLevel, listLevels, deleteLevel, formatDate } from './LevelLibrary';
 import { loadPrefs, savePrefs } from './EditorPrefs';
 import {
@@ -300,7 +300,7 @@ function toggleZone(
             if (idx >= 0) continue;
             if (remainingOf(tileSet, state.usage, zone) <= 0) { blocked = true; continue; }
             // A tile carries at most one zone, so the new one displaces any other.
-            clearOtherZones(state, zone, x, y);
+            clearZonesAt(state, x, y, zone);
             list.push({ x, y });
             state.usage[zone]++;
             changed = true;
@@ -310,17 +310,33 @@ function toggleZone(
     return changed;
 }
 
-/** Drop any zone other than `keep` from a tile — zones are one to a tile. */
-function clearOtherZones(state: EditorState, keep: ZoneKindId, x: number, y: number): void {
-    for (const other of ZONE_KINDS) {
-        if (other.id === keep) continue;
-        const list = other.tiles(state.level);
+/**
+ * Drop the zones on a tile, optionally sparing one. Used both to keep a tile to
+ * a single zone and to let the erase brush clear zones along with tiles.
+ */
+function clearZonesAt(state: EditorState, x: number, y: number, keep?: ZoneKindId): boolean {
+    let changed = false;
+    for (const zone of ZONE_KINDS) {
+        if (zone.id === keep) continue;
+        const list = zone.tiles(state.level);
         const idx = list.findIndex(t => t.x === x && t.y === y);
         if (idx >= 0) {
             list.splice(idx, 1);
-            state.usage[other.id]--;
+            state.usage[zone.id]--;
+            changed = true;
         }
     }
+    return changed;
+}
+
+/** Erase clears whatever is on a tile, zones included. */
+function eraseCells(state: EditorState, cells: Array<{ x: number; y: number }>): boolean {
+    const painted = paintCells(state, cells, TILE_EMPTY as TileValue);
+    let zonesCleared = false;
+    for (const { x, y } of cells) {
+        if (clearZonesAt(state, x, y)) zonesCleared = true;
+    }
+    return painted || zonesCleared;
 }
 
 /** The zone a zone-painting tool edits. */
@@ -333,7 +349,7 @@ function zoneForTool(tool: EditorTool): ZoneKindId | null {
 /** Tools that write into the grid; the move tool is exempt. */
 function toolWritesTiles(tool: EditorTool): boolean {
     return tool === 'paint' || tool === 'erase' || tool === 'fill'
-        || tool === 'red_zone' || tool === 'slow_zone' || tool === 'tunnel_config';
+        || tool === 'red_zone' || tool === 'slow_zone';
 }
 
 function applyToolDown(state: EditorState, cell: { x: number; y: number }): boolean {
@@ -346,7 +362,7 @@ function applyToolDown(state: EditorState, cell: { x: number; y: number }): bool
         case 'paint':
             return paintCells(state, brushCells(state, cell), state.selectedTileValue);
         case 'erase':
-            return paintCells(state, brushCells(state, cell), TILE_EMPTY as TileValue);
+            return eraseCells(state, brushCells(state, cell));
         case 'fill':
             return floodFill(state, x, y);
         case 'move': {
@@ -370,11 +386,6 @@ function applyToolDown(state: EditorState, cell: { x: number; y: number }): bool
             showToast('Pick an object in the Objects list, then tap the maze to place it');
             return false;
         }
-        case 'tunnel_config': {
-            if (state.level.tunnelRow === y) return false;
-            state.level.tunnelRow = y;
-            return true;
-        }
         case 'red_zone':
         case 'slow_zone': {
             const zone = zoneForTool(state.selectedTool)!;
@@ -394,16 +405,11 @@ function applyToolDrag(state: EditorState, cell: { x: number; y: number }): bool
         case 'paint':
             return paintCells(state, brushCells(state, cell), state.selectedTileValue);
         case 'erase':
-            return paintCells(state, brushCells(state, cell), TILE_EMPTY as TileValue);
+            return eraseCells(state, brushCells(state, cell));
         case 'move':
             return state.draggingMarker
                 ? moveMarker(state, state.draggingMarker, cell, false)
                 : false;
-        case 'tunnel_config': {
-            if (state.level.tunnelRow === y) return false;
-            state.level.tunnelRow = y;
-            return true;
-        }
         case 'red_zone':
         case 'slow_zone': {
             if (!zoneDragMode) return false;
@@ -493,27 +499,22 @@ function drawWrapArrow(ctx: CanvasRenderingContext2D, cx: number, cy: number, di
 }
 
 /**
- * The tunnel row only does two things: walking off either end wraps you to the
- * other side, and enemies crawl through the end columns. Draw those, rather
- * than tinting the whole row as though every tile in it were special.
+ * A tunnel row only does one thing: walking off either end wraps you to the
+ * other side. Draw that, rather than tinting the whole row as though every
+ * tile in it were special.
  */
 function drawTunnelOverlay(ctx: CanvasRenderingContext2D, state: EditorState): void {
-    const lv = state.level;
-    const row = lv.tunnelRow;
-    if (row < 0 || row >= gridH) return;
+    for (let row = 0; row < gridH; row++) {
+        if (Levels.wrapsAt(state.level, row)) drawTunnelRow(ctx, row);
+    }
+}
 
+function drawTunnelRow(ctx: CanvasRenderingContext2D, row: number): void {
     const top = row * unit;
     const width = gridW * unit;
     const midY = top + unit / 2;
 
     ctx.save();
-
-    // While the tunnel tool is active, show the whole row — that is what a
-    // click is about to change.
-    if (state.selectedTool === 'tunnel_config') {
-        ctx.fillStyle = 'rgba(0,200,255,0.10)';
-        ctx.fillRect(0, top, width, unit);
-    }
 
     // The row itself, as a dashed centre line
     ctx.strokeStyle = 'rgba(0,216,255,0.5)';
@@ -1147,7 +1148,7 @@ const TABS: Array<{ id: string; icon: string; label: string; title: string }> = 
 const TOOL_TAB: Record<EditorTool, string> = {
     paint: 'paint', erase: 'paint', fill: 'paint',
     move: 'objects',
-    red_zone: 'zones', slow_zone: 'zones', tunnel_config: 'zones',
+    red_zone: 'zones', slow_zone: 'zones',
 };
 
 const TOOL_BUTTONS: Array<{ tool: EditorTool; id: string }> = [
@@ -1157,7 +1158,6 @@ const TOOL_BUTTONS: Array<{ tool: EditorTool; id: string }> = [
     { tool: 'move',          id: 'ed-tool-move'    },
     { tool: 'red_zone',      id: 'ed-tool-redzone'  },
     { tool: 'slow_zone',     id: 'ed-tool-slowzone' },
-    { tool: 'tunnel_config', id: 'ed-tool-tunnel'  },
 ];
 
 const PANEL_CSS = `
@@ -1305,6 +1305,12 @@ const PANEL_CSS = `
     font-size: 11px; line-height: 1.45;
     flex: 0 1 auto; max-height: 84px; overflow-y: auto;
 }
+#ed-validate-result .ed-headline {
+    font-size: 13px; font-weight: bold; padding: 5px 6px; border-radius: 5px;
+    margin-bottom: 4px; position: sticky; top: 0;
+}
+#ed-validate-result .ed-headline.ed-ok    { background: #0c2c14; }
+#ed-validate-result .ed-headline.ed-error { background: #2e0f0f; }
 #ed-validate-result .ed-error   { color: #ff8080; }
 #ed-validate-result .ed-warning { color: #ffcc44; }
 #ed-validate-result .ed-ok      { color: #7f7; }
@@ -1416,14 +1422,11 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
 
             <section id="ed-panel-zones" class="ed-tab-panel" role="tabpanel" aria-labelledby="ed-tab-zones" hidden>
                 <div class="ed-grid" style="--col: 116px">
-                    <button id="ed-tool-redzone" aria-pressed="false" title="Toggle no-turn-up junction tiles (R)">
+                    <button id="ed-tool-redzone" aria-pressed="false" title="Paint junctions where enemies may not turn up — Erase clears them (R)">
                         ⊕ Red zone<span class="ed-count" id="ed-rz-count"></span>
                     </button>
-                    <button id="ed-tool-slowzone" aria-pressed="false" title="Toggle tiles where enemies crawl (S)">
+                    <button id="ed-tool-slowzone" aria-pressed="false" title="Paint tiles where enemies crawl — Erase clears them (S)">
                         ⌁ Slow tiles<span class="ed-count" id="ed-slow-count"></span>
-                    </button>
-                    <button id="ed-tool-tunnel" aria-pressed="false" title="Click a row to make it the warp tunnel (T)">
-                        ~ Tunnel row<span class="ed-count" id="ed-tunnel-row"></span>
                     </button>
                 </div>
                 <p class="ed-desc" id="ed-tunnel-desc"></p>
@@ -1452,7 +1455,7 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
                     <li><kbd>1</kbd>–<kbd>5</kbd> pick a tile</li>
                     <li><kbd>B</kbd> paint · <kbd>E</kbd> erase · <kbd>F</kbd> fill</li>
                     <li><kbd>M</kbd> move objects · arrows nudge</li>
-                    <li><kbd>R</kbd> red zone · <kbd>S</kbd> slow tiles · <kbd>T</kbd> tunnel row</li>
+                    <li><kbd>R</kbd> red zone · <kbd>S</kbd> slow tiles</li>
                     <li><kbd>[</kbd> <kbd>]</kbd> brush size · <kbd>X</kbd> cycle mirror</li>
                     <li><kbd>G</kbd> grid · <kbd>H</kbd> hide panel</li>
                     <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo</li>
@@ -1630,10 +1633,9 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
     // Test level
     el<HTMLButtonElement>('ed-test-btn').onclick = () => {
         const result = runValidation(state);
-        if (!result.valid) {
-            showToast('Fix the errors listed in the panel before testing');
-            return;
-        }
+        // runValidation has already opened the Level tab and named the first
+        // problem, so there is nothing vague left to say here.
+        if (!result.valid) return;
         // Persist so the editor session survives the test
         try {
             localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(state.level));
@@ -1792,10 +1794,16 @@ function refreshReadouts(state: EditorState): void {
     // Zones
     el('ed-rz-count').textContent   = formatBudget(state.usage.red_zone,  tileSet.budgets.red_zone);
     el('ed-slow-count').textContent = formatBudget(state.usage.slow_zone, tileSet.budgets.slow_zone);
-    el('ed-tunnel-row').textContent = `row ${state.level.tunnelRow}`;
-    el('ed-tunnel-desc').textContent =
-        'Cyan boxes mark the two tiles that wrap to the other side. Amber tiles are '
-        + 'slow tiles — paint them anywhere enemies should crawl.';
+    const wrapRows: number[] = [];
+    for (let row = 0; row < gridH; row++) {
+        if (Levels.wrapsAt(state.level, row)) wrapRows.push(row);
+    }
+    el('ed-tunnel-desc').textContent = (wrapRows.length === 0
+        ? 'Nothing wraps: no row is open at both edges. '
+        : `Wraps on row${wrapRows.length === 1 ? '' : 's'} ${wrapRows.join(', ')} — `
+            + 'a row wraps wherever both of its end tiles are walkable, so open an '
+            + 'edge to make one. ')
+        + 'Amber tiles are slow tiles. Tap a marked tile again to clear it, or use Erase.';
 
     // Tabs
     for (const tab of TABS) {
@@ -1824,7 +1832,6 @@ function toolSummary(state: EditorState): string {
             : 'Move objects';
         case 'red_zone':      return 'Red zone';
         case 'slow_zone':     return 'Slow tiles';
-        case 'tunnel_config': return 'Set tunnel row';
     }
 }
 
@@ -1845,9 +1852,21 @@ function updateHoverInfo(state: EditorState): void {
     ui.info.textContent = parts.join(' · ');
 }
 
-function runValidation(state: EditorState): { valid: boolean } {
+/**
+ * Run the checks and say so where it can be seen: a headline in the Level tab,
+ * a toast for whoever is looking at the maze rather than the panel, and — since
+ * the detail lives in one tab — that tab brought forward.
+ */
+function runValidation(state: EditorState, reveal = true): ValidationResult {
     const result = validateLevel(state.level, activeTileSet(state));
     if (!ui) return result;
+
+    const errors = result.errors.length;
+    const warnings = result.warnings.length;
+    const headline = result.valid
+        ? `✔ Valid — ${result.smallDots} dots, ${result.powerDots} power pellets`
+        : `✘ ${errors} ${errors === 1 ? 'problem' : 'problems'} to fix`
+            + (warnings ? `, ${warnings} to check` : '');
 
     ui.validateResult.innerHTML = '';
     const add = (cls: string, text: string): void => {
@@ -1856,11 +1875,18 @@ function runValidation(state: EditorState): { valid: boolean } {
         div.textContent = text;
         ui!.validateResult.appendChild(div);
     };
-    if (result.valid) {
-        add('ed-ok', `✔ Valid — ${result.smallDots} dots, ${result.powerDots} power pellets`);
-    }
+    add(result.valid ? 'ed-headline ed-ok' : 'ed-headline ed-error', headline);
     for (const error of result.errors)     add('ed-error', `✘ ${error}`);
     for (const warning of result.warnings) add('ed-warning', `⚠ ${warning}`);
+    if (result.valid && warnings === 0) add('ed-warning', 'No warnings.');
+
+    if (reveal) {
+        setTab(state, 'level');
+        // The first problem, by name — more use than "check the panel".
+        showToast(result.valid
+            ? headline
+            : `${headline}: ${result.errors[0]}`);
+    }
     return result;
 }
 
@@ -1983,7 +2009,6 @@ function attachKeyboardShortcuts(state: EditorState): void {
             case 'm': selectTool(state, 'move');  break;
             case 'r': selectTool(state, 'red_zone');  break;
             case 's': selectTool(state, 'slow_zone'); break;
-            case 't': selectTool(state, 'tunnel_config'); break;
             case 'g': toggleGrid(state); break;
             case 'x':
                 setMirrorMode(state, nextMirrorMode(state.prefs.mirrorMode));

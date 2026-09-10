@@ -82,9 +82,18 @@ export function validateLevel(level: LevelData, tileSet?: TileSet): ValidationRe
         warnings.push(`Fruit spawn (${Math.round(fs.x)}, ${Math.round(fs.y)}) is on a wall`);
     }
 
-    // 6. Tunnel row in bounds
-    if (level.tunnelRow < 0 || level.tunnelRow >= gridH) {
-        errors.push(`Tunnel row ${level.tunnelRow} is out of bounds`);
+    // 6. A row open at one end only has nowhere to wrap to
+    const oneSided: number[] = [];
+    for (let y = 0; y < gridH; y++) {
+        const left  = level.tiles[y][0] > TILE_WALL;
+        const right = level.tiles[y][gridW - 1] > TILE_WALL;
+        if (left !== right) oneSided.push(y);
+    }
+    if (oneSided.length > 0) {
+        warnings.push(
+            `Row(s) ${oneSided.join(', ')} are open at one edge only — nothing wraps there, `
+            + 'so that end is a dead end',
+        );
     }
 
     // 6b. Slow tiles on walls do nothing — enemies can never stand there
@@ -114,8 +123,8 @@ export function validateLevel(level: LevelData, tileSet?: TileSet): ValidationRe
         if (level.tiles[y][x] === TILE_WALL) continue;
         reachable.add(key);
 
-        // Tunnel wrapping on tunnel row
-        if (y === level.tunnelRow) {
+        // Tunnel wrapping wherever the row is open at both edges
+        if (level.tiles[y][0] > TILE_WALL && level.tiles[y][gridW - 1] > TILE_WALL) {
             if (x === 0)          queue.push({ x: gridW - 1, y });
             if (x === gridW - 1)  queue.push({ x: 0, y });
         }

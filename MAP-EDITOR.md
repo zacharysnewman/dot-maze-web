@@ -49,9 +49,12 @@ the game logic are untouched.
 
 | Tile set | Dots | Power | Ghost doors | Red zones | Slow tiles | Walls / Empty |
 |---|---|---|---|---|---|---|
-| **Classic** (default) | 240 | 4 | 2 | 4 | 12 | ∞ |
-| **Extended** | 360 | 8 | 4 | 8 | 24 | ∞ |
+| **Classic** (default) | 240 | 4 | 2 | ∞ | ∞ | ∞ |
+| **Extended** | 360 | 8 | 4 | ∞ | ∞ | ∞ |
 | **Sandbox** | ∞ | ∞ | ∞ | ∞ | ∞ | ∞ |
+
+Zones and tunnel rows are a design choice rather than a stock of pieces, so
+they are counted but never capped.
 
 - Classic's numbers are read from the built-in map at startup, so they cannot
   drift out of sync with it.
@@ -97,7 +100,20 @@ so the saved JSON is unchanged.
 | **Move objects** | Drag spawns and scatter targets | `M` |
 | **Red zone** | Click/drag to toggle junctions where ghosts can't turn up | `R` |
 | **Slow tiles** | Click/drag to toggle tiles where enemies crawl | `S` |
-| **Tunnel row** | Click any tile — its row becomes the warp tunnel row | `T` |
+
+**Erase** clears whatever is on a tile — the tile itself *and* any zone on it.
+Tapping a marked tile with its own zone tool also removes just that zone.
+
+**Wrapping is not something you place.** A row wraps wherever both of its end
+tiles are walkable — open an edge and the tunnel appears, wall one up and it is
+gone. That is what the game always did: the teleport in `Move.moveObject` fires
+when a walkable tile sits at the grid edge. A level used to *also* declare its
+tunnel rows, which could disagree with the tiles; it does not any more, and old
+levels drop the field on load.
+
+The editor draws the wrap points it finds, and the Zones tab lists the rows that
+wrap. Validation warns about a row open at one edge only, which is a dead end
+rather than a tunnel.
 
 **Slow tiles** are the warp-tunnel mouths, where enemies move at a crawl. They
 are per-tile, like red zones: paint them anywhere, in any shape, not just on the
@@ -147,8 +163,9 @@ red-zone toggling too, and every mirrored tile draws from the same budget.
   columns 0 and 27. Movable objects are exempt, so scatter targets can still sit
   in those rows; the built-in level parks two of them on row 0.
 - **Grid** — guide lines, toggled from the toolbar or with `G`.
-- **Tunnel** — cyan boxes with outward arrows on the two tiles that actually
-  wrap, amber tint on the slow tiles, and a dashed centre line marking the row. Selecting the tunnel tool lights up the whole row, since that is what
+- **Tunnel** — cyan boxes with outward arrows on the tiles that wrap, on every
+  row that has walkable tiles at both ends, with a dashed centre line marking
+  the row; amber tint on the slow tiles. Selecting the tunnel tool lights up the whole row, since that is what
   a click is about to change.
 - Red-zone tint, ghost-door outlines, mirror guides.
 - Object markers, with a dashed ring around the armed one.
@@ -173,7 +190,7 @@ Click **✔ Validate** to run all checks. Results appear inline in the panel.
 | 3 | Player spawn must be on a walkable tile (value > 0) |
 | 4 | All enemy spawns must be on walkable tiles |
 | 5 | Fruit spawn should be on a walkable tile (warning only) |
-| 6 | Tunnel row must be in bounds |
+| 6 | A row open at one edge only is a dead end, not a tunnel (warning only) |
 | 7 | Slow tiles must not sit on walls, where no enemy can reach them (warning only) |
 | 8 | BFS reachability — all dots must be reachable from player spawn (respects tunnel wrapping) |
 | 9 | Level name should not be empty (warning only) |
@@ -183,7 +200,14 @@ Click **✔ Validate** to run all checks. Results appear inline in the panel.
 | 13 | A tile marked as both a red zone and a slow tile (warning only) |
 | 14 | Two objects sharing a tile (warning only) |
 
-**▶ Test level** runs the same checks first and refuses to launch on errors.
+**✔ Validate** puts its verdict where it can be seen: a headline in the Level
+tab — green with the dot counts, or red with the number of problems — the detail
+listed beneath it, and a toast naming the first problem for whoever is looking
+at the maze rather than the panel.
+
+**▶ Test level** runs the same checks first and refuses to launch on errors,
+opening the Level tab and naming the first one rather than pointing vaguely at
+the panel.
 
 ---
 
@@ -247,7 +271,6 @@ Each entry shows:
     "orangeEnemy":  { "x": 15,   "y": 17 }
   },
   "fruitSpawn":       { "x": 13, "y": 20 },
-  "tunnelRow":        17,
   "tunnelSlowTiles": [
     { "x": 0, "y": 17 }, { "x": 1, "y": 17 }, { "x": 2, "y": 17 },
     { "x": 3, "y": 17 }, { "x": 4, "y": 17 }, { "x": 5, "y": 17 },
@@ -271,7 +294,9 @@ Each entry shows:
 `enemyHouseDoor` is derived from the painted ghost-door tiles rather than placed
 separately, but it is still written out exactly as before.
 
-`tunnelSlowTiles` replaces the old `tunnelSlowColMax` / `tunnelSlowColMin` pair.
+`tunnelSlowTiles` replaces the older `tunnelSlowColMax` / `tunnelSlowColMin`
+pair. `tunnelRow`, and the `tunnelRows` list that briefly replaced it, are gone —
+where a maze wraps is read from the tiles.
 A level file carrying the old fields is converted on load
 (`src/editor/LevelMigrate.ts`) into the tiles those bounds covered, so nothing
 saved by an earlier version loses its slow zones.
@@ -435,7 +460,6 @@ interface LevelData {
         orangeEnemy:  { x: number; y: number };
     };
     fruitSpawn:       { x: number; y: number };
-    tunnelRow:        number;
     tunnelSlowTiles:  { x: number; y: number }[];
     redZoneTiles:     { x: number; y: number }[];
     enemyHouseDoor:   { x: number; y: number };
@@ -461,6 +485,8 @@ interface LevelData {
 | Brush sizes and 4-way mirror painting | ✅ Complete |
 | Map bounds rectangle, HUD rows locked, faint grid | ✅ Complete |
 | Slow tunnel as paintable tiles (`tunnelSlowTiles`) | ✅ Complete |
+| Wrapping derived from the tiles, on any number of rows | ✅ Complete |
+| Erase clears zones as well as tiles | ✅ Complete |
 | One zone per tile, one object per tile | ✅ Complete |
 | Tabbed toolbar — every control reachable without scrolling | ✅ Complete |
 | Maze at full size, panel in the space it cannot use | ✅ Complete |

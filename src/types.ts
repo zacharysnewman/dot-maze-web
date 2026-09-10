@@ -50,7 +50,6 @@ export interface LevelData {
         orangeEnemy: { x: number; y: number };
     };
     fruitSpawn:       { x: number; y: number };
-    tunnelRow:        number;
     /** Tiles where enemies crawl (the warp-tunnel mouths). */
     tunnelSlowTiles:  { x: number; y: number }[];
     redZoneTiles:     { x: number; y: number }[];

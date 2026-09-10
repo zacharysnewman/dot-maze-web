@@ -220,7 +220,7 @@ function getFrightenedDuration(level: number): number {
 
 // Returns true if enemy can physically move in dir from its current rounded tile
 function canEnemyMoveDir(enemy: IGameObject, dir: Direction): boolean {
-    const onTunnelRow = enemy.roundedY() === gameState.currentLevel.tunnelRow;
+    const onTunnelRow = Levels.wrapsAt(gameState.currentLevel, enemy.roundedY());
     switch (dir) {
         case 'left':  return (enemy.leftObject()   ?? 0) > 2 || (onTunnelRow && enemy.leftObject()  === undefined);
         case 'right': return (enemy.rightObject()  ?? 0) > 2 || (onTunnelRow && enemy.rightObject() === undefined);

@@ -269,8 +269,10 @@ function classicBudgets(): Usage {
         dot:       counted.dot,
         power:     counted.power,
         door:      counted.door,
-        red_zone:  counted.red_zone,
-        slow_zone: counted.slow_zone,
+        // Zones are a design choice rather than a stock of pieces, so they are
+        // counted but never capped.
+        red_zone:  INFINITE,
+        slow_zone: INFINITE,
     };
 }
 
@@ -293,8 +295,8 @@ export const TILE_SETS: readonly TileSet[] = [
             dot:       Math.round(CLASSIC.dot * 1.5),
             power:     CLASSIC.power * 2,
             door:      CLASSIC.door * 2,
-            red_zone:  CLASSIC.red_zone * 2,
-            slow_zone: CLASSIC.slow_zone * 2,
+            red_zone:  INFINITE,
+            slow_zone: INFINITE,
         },
     },
     {
