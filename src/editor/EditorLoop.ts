@@ -4,22 +4,28 @@ import { Levels } from '../static/Levels';
 import { Draw } from '../static/Draw';
 import { exitTestGame, startTestGame, viewportSize } from '../Game';
 import type { LevelData, TileValue } from '../types';
-import { TILE_EMPTY, TILE_GHOST_DOOR } from '../tiles';
+import { TILE_EMPTY, TILE_ENEMY_DOOR } from '../tiles';
 import { validateLevel, type ValidationResult } from './Validate';
 import { saveLevel, listLevels, deleteLevel, formatDate } from './LevelLibrary';
 import { loadPrefs, savePrefs } from './EditorPrefs';
 import {
     EDIT_MAX_Y,
     EDIT_MIN_Y,
+    HOUSE_HINT,
+    HOUSE_MAX_X,
+    HOUSE_MAX_Y,
+    HOUSE_MIN_X,
+    HOUSE_MIN_Y,
     RESERVED_ROWS_HINT,
     isEditableTile,
+    isEnemyHouseTile,
     isReservedRow,
 } from './Bounds';
 import { MIRROR_MODES, mirrorModeDef, mirrorPartners, nextMirrorMode, type MirrorMode } from './Mirror';
 import {
     BUDGET_ROWS,
     MARKER_KINDS,
-    TILE_KINDS,
+    PAINTABLE_TILE_KINDS,
     TILE_SETS,
     countUsage,
     formatBudget,
@@ -102,7 +108,7 @@ function syncToRenderer(state: EditorState): void {
 function syncDoorMarker(level: LevelData): void {
     for (let y = 0; y < gridH; y++) {
         for (let x = 0; x < gridW; x++) {
-            if (level.tiles[y][x] === TILE_GHOST_DOOR) {
+            if (level.tiles[y][x] === TILE_ENEMY_DOOR) {
                 level.enemyHouseDoor = { x, y };
                 return;
             }
@@ -121,6 +127,12 @@ function showToast(message: string): void {
         toastEl.id = 'ed-toast';
         toastEl.setAttribute('role', 'status');
         toastEl.setAttribute('aria-live', 'polite');
+        // Positioned inline as well as in the stylesheet: an unstyled toast is
+        // an in-flow flex child of body, which pushes the maze off centre.
+        toastEl.style.position = 'fixed';
+        toastEl.style.left = '50%';
+        toastEl.style.top = '12px';
+        toastEl.style.transform = 'translateX(-50%)';
         document.body.appendChild(toastEl);
     }
     toastEl.textContent = message;
@@ -269,6 +281,11 @@ function moveMarker(
 
     // One object per tile. Silent while dragging, so sweeping across an
     // occupied tile does not spam the toast.
+    if (marker.fixed) {
+        if (notify) showToast(`${marker.label} is part of the fixed enemy house`);
+        return false;
+    }
+
     const occupant = markerAtTile(state.level, cell.x, cell.y, id);
     if (occupant) {
         if (notify) showToast(`${occupant.label} is already on that tile`);
@@ -354,9 +371,9 @@ function toolWritesTiles(tool: EditorTool): boolean {
 
 function applyToolDown(state: EditorState, cell: { x: number; y: number }): boolean {
     const { x, y } = cell;
-    if (toolWritesTiles(state.selectedTool) && isReservedRow(y)) {
-        showToast(RESERVED_ROWS_HINT);
-        return false;
+    if (toolWritesTiles(state.selectedTool)) {
+        if (isReservedRow(y))          { showToast(RESERVED_ROWS_HINT); return false; }
+        if (isEnemyHouseTile(x, y))    { showToast(HOUSE_HINT);         return false; }
     }
     switch (state.selectedTool) {
         case 'paint':
@@ -400,7 +417,9 @@ function applyToolDown(state: EditorState, cell: { x: number; y: number }): bool
 
 function applyToolDrag(state: EditorState, cell: { x: number; y: number }): boolean {
     const { x, y } = cell;
-    if (toolWritesTiles(state.selectedTool) && isReservedRow(y)) return false;
+    if (toolWritesTiles(state.selectedTool) && (isReservedRow(y) || isEnemyHouseTile(x, y))) {
+        return false;
+    }
     switch (state.selectedTool) {
         case 'paint':
             return paintCells(state, brushCells(state, cell), state.selectedTileValue);
@@ -588,6 +607,43 @@ function drawReservedBand(
     ctx.restore();
 }
 
+/** The enemy house: hatched like the HUD bands, because it cannot be edited. */
+function drawLockedHouse(ctx: CanvasRenderingContext2D): void {
+    const x = HOUSE_MIN_X * unit;
+    const y = HOUSE_MIN_Y * unit;
+    const w = (HOUSE_MAX_X - HOUSE_MIN_X + 1) * unit;
+    const h = (HOUSE_MAX_Y - HOUSE_MIN_Y + 1) * unit;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = -h; i < w; i += 9) {
+        ctx.moveTo(x + i, y + h);
+        ctx.lineTo(x + i + h, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = `bold ${Math.round(unit * 0.4)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('ENEMY HOUSE — FIXED', x + w / 2, y + h - unit * 0.4);
+    ctx.restore();
+}
+
 function drawEditorOverlay(state: EditorState, ctx: CanvasRenderingContext2D): void {
     const lv = state.level;
 
@@ -609,13 +665,13 @@ function drawEditorOverlay(state: EditorState, ctx: CanvasRenderingContext2D): v
     }
     ctx.restore();
 
-    // Ghost door tiles
+    // Enemy door tiles
     ctx.save();
     ctx.strokeStyle = 'rgba(255,180,255,0.9)';
     ctx.lineWidth = 2;
     for (let y = 0; y < gridH; y++) {
         for (let x = 0; x < gridW; x++) {
-            if (lv.tiles[y][x] === TILE_GHOST_DOOR) {
+            if (lv.tiles[y][x] === TILE_ENEMY_DOOR) {
                 ctx.strokeRect(x * unit + 1, y * unit + 1, unit - 2, unit - 2);
             }
         }
@@ -667,6 +723,7 @@ function drawEditorOverlay(state: EditorState, ctx: CanvasRenderingContext2D): v
     // Reserved rows: the HUD covers these in play, so they cannot be painted
     drawReservedBand(ctx, 0, EDIT_MIN_Y, 'SCORE');
     drawReservedBand(ctx, EDIT_MAX_Y + 1, gridH - 1 - EDIT_MAX_Y, 'LIVES');
+    drawLockedHouse(ctx);
 
     // Map bounds — the full grid, including the rows the HUD covers, which
     // objects can still use even though tiles cannot.
@@ -797,6 +854,8 @@ const PANEL_GAP = 16;
 const BOTTOM_DOCK_MIN = 280;
 /** A panel shorter than this switches to the compact control sizes. */
 const COMPACT_PANEL_HEIGHT = 400;
+/** Below this panel width the six tabs wrap to two rows of three. */
+const TABS_ONE_ROW_WIDTH = 430;
 let panelOpen = true;
 
 type PanelDock = 'side' | 'bottom';
@@ -874,6 +933,9 @@ function layoutCanvas(): void {
             'ed-labels',
             panelWidth >= 340 || panelHeight >= COMPACT_PANEL_HEIGHT,
         );
+        // All six tabs on one row where they fit, otherwise an even 3 × 2 —
+        // never a ragged 5 + 1.
+        panel.classList.toggle('ed-tabs-wide', panelWidth >= TABS_ONE_ROW_WIDTH);
         const hideGlyph = panel.querySelector('#ed-hide .ed-glyph');
         if (hideGlyph) hideGlyph.textContent = dock === 'bottom' ? '⌄' : '›';
     }
@@ -1200,12 +1262,21 @@ const PANEL_CSS = `
 #editor-panel.ed-labels .ed-btn-label { display: inline; }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
-#ed-tabs { display: flex; gap: 4px; flex-shrink: 0; }
+/* A wrapping grid rather than one squeezed row: six tabs stay readable in a
+   narrow panel by taking a second row instead of clipping their labels. */
+#ed-tabs {
+    display: grid; gap: 4px; flex-shrink: 0;
+    grid-template-columns: repeat(3, 1fr);
+}
+#editor-panel.ed-tabs-wide #ed-tabs { grid-template-columns: repeat(6, 1fr); }
 #ed-tabs button {
-    flex: 1 1 0; min-width: 0; flex-direction: column; gap: 1px;
+    min-width: 0; flex-direction: column; gap: 1px;
     justify-content: center; align-items: center; text-align: center;
     padding: 4px 2px; min-height: 46px; font-size: 10px; letter-spacing: 0;
     color: #bbb; background: #191919;
+}
+#ed-tabs button > span {
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 #ed-tabs button .ed-tab-icon { font-size: 16px; line-height: 1.1; }
 #ed-tabs button[aria-selected="true"] {
@@ -1369,13 +1440,28 @@ function el<T extends HTMLElement>(id: string): T {
     return document.getElementById(id) as T;
 }
 
+/**
+ * Install the editor's stylesheet once, in <head>.
+ *
+ * It used to live in a <style> inside the panel, which a play-test removes —
+ * taking the toast's `position: fixed` with it. The toast then became an
+ * in-flow flex child of body beside the canvas and shoved the maze sideways.
+ */
+function ensureEditorStyles(): void {
+    if (document.getElementById('ed-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'ed-styles';
+    style.textContent = PANEL_CSS;
+    document.head.appendChild(style);
+}
+
 function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
+    ensureEditorStyles();
     const panel = panelEl ?? document.createElement('div');
     panel.id = 'editor-panel';
     panel.setAttribute('role', 'region');
     panel.setAttribute('aria-label', 'Level editor tools');
     panel.innerHTML = `
-        <style>${PANEL_CSS}</style>
 
         <div class="ed-bar">
             <button id="ed-hide" class="ed-icon-btn" aria-label="Hide the tools panel" title="Hide the tools panel (H)">
@@ -1538,7 +1624,7 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
     }
 
     // Tile palette
-    for (const kind of TILE_KINDS) {
+    for (const kind of PAINTABLE_TILE_KINDS) {
         const button = document.createElement('button');
         button.id = `ed-tile-${kind.id}`;
         button.type = 'button';
@@ -1758,7 +1844,7 @@ function refreshReadouts(state: EditorState): void {
     }
 
     // Palette: selection + how many are left
-    for (const kind of TILE_KINDS) {
+    for (const kind of PAINTABLE_TILE_KINDS) {
         const button = document.getElementById(`ed-tile-${kind.id}`);
         if (!button) continue;
         const selected = state.selectedTool === 'paint' && state.selectedTileValue === kind.value;
@@ -1996,7 +2082,7 @@ function attachKeyboardShortcuts(state: EditorState): void {
         }
         if (e.altKey) return;
 
-        const tileByKey = TILE_KINDS.find(k => k.key === e.key);
+        const tileByKey = PAINTABLE_TILE_KINDS.find(k => k.key === e.key);
         if (tileByKey) {
             selectTile(state, tileByKey.value);
             return;

@@ -1453,7 +1453,7 @@ window.onload = function () {
                 <label><input type="checkbox" id="dbg-viz"> Targeting viz</label>
                 <label><input type="checkbox" id="dbg-modes"> Enemy modes</label>
                 <label><input type="checkbox" id="dbg-redzones"> Red zones</label>
-                <label><input type="checkbox" id="dbg-ghostpaths"> Enemy paths</label>
+                <label><input type="checkbox" id="dbg-enemypaths"> Enemy paths</label>
                 <label><input type="checkbox" id="dbg-tilepicker"> Tile picker</label>
                 <label style="flex-direction:column;align-items:flex-start;gap:10px">
                     <span id="dbg-extra-players-label">Extra players: 0</span>
@@ -1488,7 +1488,7 @@ window.onload = function () {
         (document.getElementById('dbg-redzones') as HTMLInputElement).onchange = (e) => {
             gameState.debugShowRedZones = (e.target as HTMLInputElement).checked;
         };
-        (document.getElementById('dbg-ghostpaths') as HTMLInputElement).onchange = (e) => {
+        (document.getElementById('dbg-enemypaths') as HTMLInputElement).onchange = (e) => {
             gameState.debugShowEnemyPaths = (e.target as HTMLInputElement).checked;
         };
         (document.getElementById('dbg-tilepicker') as HTMLInputElement).onchange = (e) => {

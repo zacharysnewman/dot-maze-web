@@ -6,7 +6,7 @@
 // INFINITE (-1) means "place as many as you like".
 
 import { Levels } from '../static/Levels';
-import { TILE_WALL, TILE_GHOST_DOOR, TILE_DOT, TILE_POWER, TILE_EMPTY } from '../tiles';
+import { TILE_WALL, TILE_ENEMY_DOOR, TILE_DOT, TILE_POWER, TILE_EMPTY } from '../tiles';
 import type { LevelData, TileValue } from '../types';
 
 /** Budget value meaning "unlimited". */
@@ -44,6 +44,12 @@ export interface TileKind {
     hint: string;
     /** Digit shortcut in the palette. */
     key: string;
+    /**
+     * Kinds without a palette entry. The enemy door only makes sense inside the
+     * fixed enemy house, which the editor does not let you change, so it is
+     * still counted and drawn — just never painted.
+     */
+    paintable?: boolean;
 }
 
 export const TILE_KINDS: readonly TileKind[] = [
@@ -61,16 +67,21 @@ export const TILE_KINDS: readonly TileKind[] = [
     },
     {
         id: 'power', value: TILE_POWER as TileValue, label: 'Power', swatch: '#fff2a8', key: '4',
-        hint: 'Power pellet — frightens the ghosts',
+        hint: 'Power pellet — frightens the enemies',
     },
     {
-        id: 'door', value: TILE_GHOST_DOOR as TileValue, label: 'Ghost Door', swatch: '#ff9ad5', key: '5',
-        hint: 'Ghost-house gate — only ghosts entering or leaving the house pass',
+        id: 'door', value: TILE_ENEMY_DOOR as TileValue, label: 'Enemy Door', swatch: '#ff9de0',
+        key: '', paintable: false,
+        hint: 'Gate the enemies pass through — part of the fixed enemy house',
     },
 ] as const;
 
+/** The kinds the palette offers. */
+export const PAINTABLE_TILE_KINDS: readonly TileKind[] =
+    TILE_KINDS.filter(k => k.paintable !== false);
+
 export function tileKindOfValue(value: TileValue): TileKind {
-    return TILE_KINDS.find(k => k.value === value) ?? TILE_KINDS[1];
+    return TILE_KINDS.find(k => k.value === value) ?? tileKindById('empty');
 }
 
 export function tileKindById(id: TileKindId): TileKind {
@@ -87,6 +98,8 @@ export interface MarkerKind {
     color: string;
     /** 'spawn' markers sit on the maze; 'scatter' markers are AI corner targets. */
     group: 'spawn' | 'scatter';
+    /** Fixed markers cannot be moved — the game hardcodes where they belong. */
+    fixed?: boolean;
     hint: string;
     get(level: LevelData): { x: number; y: number };
     set(level: LevelData, pos: { x: number; y: number }): void;
@@ -100,26 +113,26 @@ export const MARKER_KINDS: readonly MarkerKind[] = [
         set: (lv, p) => { lv.playerStart = p; },
     },
     {
-        id: 'enemy_red', label: 'Red ghost', badge: 'R', color: '#FF3333', group: 'spawn',
-        hint: 'Red ghost starting point',
+        id: 'enemy_red', fixed: true, label: 'Red enemy', badge: 'R', color: '#FF3333', group: 'spawn',
+        hint: 'Red enemy starting point',
         get: lv => lv.enemyStarts.redEnemy,
         set: (lv, p) => { lv.enemyStarts.redEnemy = p; },
     },
     {
-        id: 'enemy_cyan', label: 'Cyan ghost', badge: 'C', color: '#00FFFF', group: 'spawn',
-        hint: 'Cyan ghost starting point',
+        id: 'enemy_cyan', fixed: true, label: 'Cyan enemy', badge: 'C', color: '#00FFFF', group: 'spawn',
+        hint: 'Cyan enemy starting point',
         get: lv => lv.enemyStarts.cyanEnemy,
         set: (lv, p) => { lv.enemyStarts.cyanEnemy = p; },
     },
     {
-        id: 'enemy_hotpink', label: 'Pink ghost', badge: 'H', color: '#FFB8FF', group: 'spawn',
-        hint: 'Pink ghost starting point',
+        id: 'enemy_hotpink', fixed: true, label: 'Pink enemy', badge: 'H', color: '#FFB8FF', group: 'spawn',
+        hint: 'Pink enemy starting point',
         get: lv => lv.enemyStarts.hotpinkEnemy,
         set: (lv, p) => { lv.enemyStarts.hotpinkEnemy = p; },
     },
     {
-        id: 'enemy_orange', label: 'Orange ghost', badge: 'O', color: '#FFB852', group: 'spawn',
-        hint: 'Orange ghost starting point',
+        id: 'enemy_orange', fixed: true, label: 'Orange enemy', badge: 'O', color: '#FFB852', group: 'spawn',
+        hint: 'Orange enemy starting point',
         get: lv => lv.enemyStarts.orangeEnemy,
         set: (lv, p) => { lv.enemyStarts.orangeEnemy = p; },
     },
@@ -131,25 +144,25 @@ export const MARKER_KINDS: readonly MarkerKind[] = [
     },
     {
         id: 'scatter_red', label: 'Red target', badge: '✕', color: '#FF3333', group: 'scatter',
-        hint: 'Corner the red ghost retreats to in scatter mode',
+        hint: 'Corner the red enemy retreats to in scatter mode',
         get: lv => lv.scatterTargets.redEnemy,
         set: (lv, p) => { lv.scatterTargets.redEnemy = p; },
     },
     {
         id: 'scatter_cyan', label: 'Cyan target', badge: '✕', color: '#00FFFF', group: 'scatter',
-        hint: 'Corner the cyan ghost retreats to in scatter mode',
+        hint: 'Corner the cyan enemy retreats to in scatter mode',
         get: lv => lv.scatterTargets.cyanEnemy,
         set: (lv, p) => { lv.scatterTargets.cyanEnemy = p; },
     },
     {
         id: 'scatter_hotpink', label: 'Pink target', badge: '✕', color: '#FFB8FF', group: 'scatter',
-        hint: 'Corner the pink ghost retreats to in scatter mode',
+        hint: 'Corner the pink enemy retreats to in scatter mode',
         get: lv => lv.scatterTargets.hotpinkEnemy,
         set: (lv, p) => { lv.scatterTargets.hotpinkEnemy = p; },
     },
     {
         id: 'scatter_orange', label: 'Orange target', badge: '✕', color: '#FFB852', group: 'scatter',
-        hint: 'Corner the orange ghost retreats to in scatter mode',
+        hint: 'Corner the orange enemy retreats to in scatter mode',
         get: lv => lv.scatterTargets.orangeEnemy,
         set: (lv, p) => { lv.scatterTargets.orangeEnemy = p; },
     },
@@ -342,7 +355,6 @@ export function formatBudget(used: number, budget: number): string {
 export const BUDGET_ROWS: readonly { key: BudgetKey; label: string }[] = [
     { key: 'dot',      label: 'Dots'      },
     { key: 'power',    label: 'Power'     },
-    { key: 'door',     label: 'Doors'     },
     { key: 'red_zone',  label: 'Red zones' },
     { key: 'slow_zone', label: 'Slow tiles' },
     { key: 'wall',      label: 'Walls'     },
