@@ -44,10 +44,14 @@ export function isReservedRow(y: number): boolean {
  * first enemy is eaten and its eyes flew back to a wall, so the editor keeps
  * the whole enclosure — and the corridor its exit opens onto — as it is.
  */
+// The box covers the whole structure, not just its interior: row 14 is the
+// corridor enemies exit onto, and rows 18-19 are its bottom wall, which is two
+// tiles thick like every other wall in the maze. Leaving row 19 editable let
+// you paint a hole straight through the floor of the house.
 export const HOUSE_MIN_X = 10;
 export const HOUSE_MAX_X = 17;
 export const HOUSE_MIN_Y = 14;
-export const HOUSE_MAX_Y = 18;
+export const HOUSE_MAX_Y = 19;
 
 export function isEnemyHouseTile(x: number, y: number): boolean {
     return x >= HOUSE_MIN_X && x <= HOUSE_MAX_X && y >= HOUSE_MIN_Y && y <= HOUSE_MAX_Y;

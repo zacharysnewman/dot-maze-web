@@ -160,9 +160,13 @@ red-zone toggling too, and every mirrored tile draws from the same budget.
 
 ### The fixed enemy house
 
-The enemy house is **not editable**. Columns 10–17, rows 14–18 are locked the
+The enemy house is **not editable**. Columns 10–17, rows 14–19 are locked the
 same way the HUD rows are: paint, erase, fill and the zone tools all refuse a
 click there, and the four enemy spawns inside it cannot be dragged or nudged.
+
+The box covers the whole structure rather than just its interior: row 14 is the
+corridor enemies exit onto, and rows 18–19 are the bottom wall, two tiles thick
+like every other wall in the maze.
 
 That is not a style choice — the game navigates the house by hardcoded pixel
 coordinates, so a house built anywhere else breaks the moment an enemy is eaten:
@@ -192,7 +196,7 @@ enclosure, and reports an error if they cannot.
   refused there. Columns are never clipped — the tunnel has to wrap through
   columns 0 and 27. Movable objects are exempt, so scatter targets can still sit
   in those rows; the built-in level parks two of them on row 0.
-- **Enemy house** — the fixed enclosure at columns 10–17, rows 14–18 is
+- **Enemy house** — the fixed enclosure at columns 10–17, rows 14–19 is
   hatched and labelled *ENEMY HOUSE — FIXED*. Tiles, zones and the four enemy
   spawns inside it are all refused, with a toast saying why.
 - **Grid** — guide lines, toggled from the toolbar or with `G`.
