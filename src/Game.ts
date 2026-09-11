@@ -22,6 +22,11 @@ import { CompositePlayerInput } from './input/CompositePlayerInput';
 import { RemotePlayerInput } from './net/RemotePlayerInput';
 import type { InputMsg } from './net/Protocol';
 import { encodeHeld, encodeMessage, decodeMessage } from './net/Protocol';
+import { NetHost } from './net/NetHost';
+import { NetClient } from './net/NetClient';
+import type { JoinFailure } from './net/NetClient';
+import type { CodeEntry, LobbyView } from './net/LobbyScreen';
+import { drawLobbyScreen, hitsLeaveButton, showCodeEntry } from './net/LobbyScreen';
 
 
 // Enemy eye-return speed (constant regardless of level)
@@ -909,7 +914,7 @@ function update(): void {
         } else {
             gameStarted = false;
             menuMusicPlaying = false;
-            document.onkeydown = (e: KeyboardEvent) => { handleMenuInteraction(); };
+            document.onkeydown = menuKeyHandler;
             startScreenLoop();
         }
         return;
@@ -1083,9 +1088,24 @@ let audioUnlocked = false;   // true after first user gesture (AudioContext crea
 let menuMusicPlaying = false; // true while menu music is actively playing
 let controllerActive = false; // true once any gamepad interaction is detected; never resets
 
+// Start-screen menu. 'play' is first so the long-standing flow — tap, tap, play
+// — reaches the same place it always did without touching the arrows.
+const MENU_ITEMS = ['play', 'host', 'join'] as const;
+type MenuItem = typeof MENU_ITEMS[number];
+let menuIndex = 0;
+
+// Online session state. Exactly one of these is set while a lobby is up.
+let netHost: NetHost | null = null;
+let netClient: NetClient | null = null;
+let lobbyView: LobbyView | null = null;
+let lobbyRunning = false;
+
 let menuAnimTime = 0;
 let menuAnimLastTs = 0;
-let startScreenPrevA = false; // tracks gamepad A button state for rising-edge detection
+// Gamepad button states on the start screen, for rising-edge detection
+let startScreenPrevA = false;
+let startScreenPrevUp = false;
+let startScreenPrevDown = false;
 
 function drawMenuPlayer(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, dir: 'left' | 'right', mouthOpen: number): void {
     const dirMultiplier = dir === 'right' ? 0 : 1;
@@ -1113,7 +1133,9 @@ function drawMenuChase(t: number): void {
     const w = gameState.canvas.width;
     const scale = 0.55;
     const size = scale * unit;
-    const y = unit * 28.5;
+    // Above the menu rather than through it: phase B draws the player at double
+    // size, which reached into the first menu row at the old height.
+    const y = unit * 27.2;
     const spacing = unit * 1.8;
     const spacingB = unit * 2.8;  // wider spacing for phase B
     const enemyColors = ['red', '#ffb8ff', 'cyan', 'orange'];
@@ -1176,6 +1198,10 @@ function handleMenuInteraction(hasGamepad = false): void {
         menuMusicPlaying = true;
         return;
     }
+    const choice: MenuItem = MENU_ITEMS[menuIndex];
+    if (choice === 'host') { startHosting(); return; }
+    if (choice === 'join') { startJoining(); return; }
+
     // Audio already unlocked — go to player select if a controller is connected,
     // otherwise start solo directly (keeps single-player flow intact).
     gameStarted = true;
@@ -1184,6 +1210,184 @@ function handleMenuInteraction(hasGamepad = false): void {
     } else {
         start([{ id: 1, input: new CompositePlayerInput([new KeyboardPlayerInput(), new TouchPlayerInput()]) as PlayerInput }]);
     }
+}
+
+function moveMenu(delta: number): void {
+    if (gameStarted || !audioUnlocked) return;
+    menuIndex = (menuIndex + delta + MENU_ITEMS.length) % MENU_ITEMS.length;
+}
+
+/** Arrow keys pick a menu entry; anything else confirms, as it always has. */
+function menuKeyHandler(e: KeyboardEvent): void {
+    if (e.key === 'ArrowUp')        { e.preventDefault(); moveMenu(-1); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); moveMenu(1); }
+    else                            { handleMenuInteraction(); }
+}
+
+// ── Online lobby ──────────────────────────────────────────────────────────────
+
+/**
+ * The name shown on a lobby roster. The initials a player last entered on the
+ * high-score screen are the name they already identify with, so online play
+ * reuses them rather than asking for a name of its own. Anyone who has never
+ * placed gets a tag generated once and kept.
+ */
+function localPlayerName(): string {
+    const stored = Stats.loadInitials();
+    if (stored !== null) return stored;
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    let tag = '';
+    for (let i = 0; i < 3; i++) tag += letters[Math.floor(Math.random() * letters.length)];
+    Stats.saveInitials(tag);
+    return tag;
+}
+
+function lobbyStatusFor(playerCount: number): string {
+    return playerCount < 2 ? 'WAITING FOR PLAYERS...' : `${playerCount} PLAYERS CONNECTED`;
+}
+
+function startHosting(): void {
+    gameStarted = true; // keeps startScreenLoop and the menu handlers out of the way
+    netHost = new NetHost({
+        level: Levels.level1Data,
+        name: localPlayerName(),
+        onRosterChange: (roster) => {
+            if (lobbyView === null) return;
+            lobbyView.roster = roster;
+            lobbyView.status = lobbyStatusFor(roster.length);
+        },
+    });
+    lobbyView = {
+        role: 'host',
+        code: netHost.code,
+        roster: netHost.roster(),
+        selfPlayerId: 1,
+        status: lobbyStatusFor(1),
+        error: null,
+    };
+    enterLobby();
+}
+
+function startJoining(): void {
+    gameStarted = true;
+    let entry: CodeEntry | null = null;
+
+    entry = showCodeEntry({
+        onSubmit: (code) => {
+            entry?.setBusy('CONNECTING...');
+            netClient = new NetClient({
+                code,
+                name: localPlayerName(),
+                onWelcome: (playerId) => {
+                    entry?.close();
+                    lobbyView = {
+                        role: 'client',
+                        code,
+                        roster: netClient?.roster ?? [],
+                        selfPlayerId: playerId,
+                        status: 'WAITING FOR THE HOST...',
+                        error: null,
+                    };
+                    enterLobby();
+                },
+                onRosterChange: (roster) => {
+                    if (lobbyView === null) return;
+                    lobbyView.roster = roster;
+                },
+                onFailure: (failure) => {
+                    netClient = null;
+                    // Once seated, the lobby screen owns the message and its
+                    // LEAVE button; before that, the code entry is still up and
+                    // the player can simply retype.
+                    if (lobbyView !== null) lobbyView.error = joinFailureText(failure);
+                    else entry?.setError(joinFailureText(failure));
+                },
+            });
+        },
+        onCancel: () => {
+            entry?.close();
+            netClient?.leave();
+            netClient = null;
+            showStartScreen();
+        },
+    });
+}
+
+function joinFailureText(failure: JoinFailure): string {
+    switch (failure) {
+        case 'protocol':    return 'DIFFERENT GAME VERSION - RELOAD THE PAGE';
+        case 'full':        return 'THAT GAME IS FULL';
+        case 'in-progress': return 'THAT GAME HAS ALREADY STARTED';
+        case 'timeout':     return 'NO GAME FOUND WITH THAT CODE';
+        case 'bad-code':    return 'CODES ARE SIX DIGITS';
+        case 'host-left':   return 'THE HOST LEFT';
+    }
+}
+
+function enterLobby(): void {
+    lobbyRunning = true;
+    document.onkeydown = (e: KeyboardEvent) => { if (e.key === 'Escape') leaveLobby(); };
+    gameState.canvas.addEventListener('click', onLobbyTap);
+    gameState.canvas.addEventListener('touchend', onLobbyTouch, { passive: false } as EventListenerOptions);
+    lobbyFrame();
+}
+
+// Stop the tap from reaching the document-level menu handler: leaveLobby clears
+// gameStarted, and the same gesture would otherwise bubble up and immediately
+// re-enter whatever the menu has highlighted.
+function onLobbyTap(e: MouseEvent): void {
+    e.stopPropagation();
+    if (hitsLeaveButton(...canvasPoint(e.clientX, e.clientY))) leaveLobby();
+}
+
+function onLobbyTouch(e: TouchEvent): void {
+    e.stopPropagation();
+    e.preventDefault();
+    const touch = e.changedTouches[0];
+    if (hitsLeaveButton(...canvasPoint(touch.clientX, touch.clientY))) leaveLobby();
+}
+
+/** Client coordinates to canvas coordinates — the canvas is CSS-scaled. */
+function canvasPoint(clientX: number, clientY: number): [number, number] {
+    const canvas = gameState.canvas;
+    const rect = canvas.getBoundingClientRect();
+    return [
+        (clientX - rect.left) * (canvas.width  / rect.width),
+        (clientY - rect.top)  * (canvas.height / rect.height),
+    ];
+}
+
+let lobbyPrevB = false;
+
+function lobbyFrame(): void {
+    if (!lobbyRunning || lobbyView === null) return;
+
+    const gp = (navigator.getGamepads ? navigator.getGamepads() : [])[0] ?? null;
+    const bDown = gp?.buttons[1]?.pressed ?? false;
+    if (bDown && !lobbyPrevB) { lobbyPrevB = bDown; leaveLobby(); return; }
+    lobbyPrevB = bDown;
+
+    drawLobbyScreen(lobbyView);
+    window.requestAnimationFrame(lobbyFrame);
+}
+
+function leaveLobby(): void {
+    if (!lobbyRunning) return;
+    lobbyRunning = false;
+    netHost?.close();
+    netHost = null;
+    netClient?.leave();
+    netClient = null;
+    lobbyView = null;
+    gameState.canvas.removeEventListener('click', onLobbyTap);
+    gameState.canvas.removeEventListener('touchend', onLobbyTouch);
+    showStartScreen();
+}
+
+function showStartScreen(): void {
+    gameStarted = false;
+    document.onkeydown = menuKeyHandler;
+    startScreenLoop();
 }
 
 // ── Player Select Screen ──────────────────────────────────────────────────────
@@ -1306,6 +1510,26 @@ function playerSelectLoop(): void {
     selectFrame();
 }
 
+const MENU_LABELS: Record<MenuItem, string> = {
+    play: 'START GAME',
+    host: 'HOST ONLINE',
+    join: 'JOIN ONLINE',
+};
+
+function drawStartMenu(ctx: CanvasRenderingContext2D, w: number): void {
+    const cx = w / 2;
+    for (let i = 0; i < MENU_ITEMS.length; i++) {
+        const selected = i === menuIndex;
+        const y = unit * (29.6 + i * 1.4);
+        ctx.fillStyle = selected ? 'yellow' : '#777';
+        ctx.font = `bold ${Math.round(unit * (selected ? 0.9 : 0.8))}px monospace`;
+        ctx.fillText(selected ? `\u25BA ${MENU_LABELS[MENU_ITEMS[i]]} \u25C4` : MENU_LABELS[MENU_ITEMS[i]], cx, y);
+    }
+    ctx.fillStyle = '#555';
+    ctx.font = `${Math.round(unit * 0.48)}px monospace`;
+    ctx.fillText('\u2191 \u2193 or swipe to choose - tap to confirm', cx, unit * 33.8);
+}
+
 function startScreenLoop(): void {
     if (gameStarted) return;
 
@@ -1314,6 +1538,13 @@ function startScreenLoop(): void {
     const aDown = (p1Gamepad?.buttons[0]?.pressed ?? false) || (p1Gamepad?.buttons[3]?.pressed ?? false);
     if (aDown && !startScreenPrevA) handleMenuInteraction(true);
     startScreenPrevA = aDown;
+
+    const dUp   = p1Gamepad?.buttons[12]?.pressed ?? false;
+    const dDown = p1Gamepad?.buttons[13]?.pressed ?? false;
+    if (dUp   && !startScreenPrevUp)   moveMenu(-1);
+    if (dDown && !startScreenPrevDown) moveMenu(1);
+    startScreenPrevUp   = dUp;
+    startScreenPrevDown = dDown;
 
     // Auto-play menu music after returning from a game (audio already unlocked)
     if (audioUnlocked && !menuMusicPlaying) {
@@ -1353,15 +1584,20 @@ function startScreenLoop(): void {
     menuAnimTime += menuDt;
     drawMenuChase(menuAnimTime);
 
-    // Tap to start (two-phase on first load)
-    ctx.fillStyle = 'white';
-    ctx.font = `bold ${Math.round(unit * 0.9)}px monospace`;
-    ctx.fillText(audioUnlocked ? 'TAP TO START' : 'TAP TO PLAY MUSIC', w / 2, unit * 31);
+    // Two-phase start: the first gesture only unlocks audio, so until then the
+    // menu would be a list of things a tap cannot reach yet.
+    if (!audioUnlocked) {
+        ctx.fillStyle = 'white';
+        ctx.font = `bold ${Math.round(unit * 0.9)}px monospace`;
+        ctx.fillText('TAP TO PLAY MUSIC', w / 2, unit * 31);
+    } else {
+        drawStartMenu(ctx, w);
+    }
 
     // Music credit
     ctx.fillStyle = '#888';
     ctx.font = `${Math.round(unit * 0.6)}px monospace`;
-    ctx.fillText('Music by HeatleyBros', w / 2, unit * 33.5);
+    ctx.fillText('Music by HeatleyBros', w / 2, unit * 35);
 
     window.requestAnimationFrame(startScreenLoop);
 }
@@ -1644,9 +1880,22 @@ window.onload = function () {
     // Mark controllerActive as soon as any gamepad connects (covers mid-session plug-in)
     window.addEventListener('gamepadconnected', () => { controllerActive = true; });
 
-    document.onkeydown = (e: KeyboardEvent) => { handleMenuInteraction(); };
+    document.onkeydown = menuKeyHandler;
     document.addEventListener('click', () => handleMenuInteraction());
-    document.addEventListener('touchend', (e: Event) => { e.preventDefault(); handleMenuInteraction(); }, { passive: false } as EventListenerOptions);
+
+    // Touch: a swipe up or down picks a menu entry, a tap confirms it — the same
+    // idiom the player select screen uses.
+    let menuTouchStartY = 0;
+    document.addEventListener('touchstart', (e: TouchEvent) => {
+        menuTouchStartY = e.touches[0]?.clientY ?? 0;
+    }, { passive: true });
+    document.addEventListener('touchend', (e: TouchEvent) => {
+        e.preventDefault();
+        if (gameStarted) return;
+        const dy = (e.changedTouches[0]?.clientY ?? 0) - menuTouchStartY;
+        if (audioUnlocked && Math.abs(dy) > 40) moveMenu(dy > 0 ? 1 : -1);
+        else handleMenuInteraction();
+    }, { passive: false } as EventListenerOptions);
 
     startScreenLoop();
 };

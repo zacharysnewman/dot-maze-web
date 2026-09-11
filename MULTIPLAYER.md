@@ -37,6 +37,11 @@ traffic goes peer-to-peer and never touches a metered service, and the project
 stays a pure static GitHub Pages deploy with no account, no deploy step and
 nothing to keep alive.
 
+Trystero's default entry point signals over public **nostr** relays (the other
+strategies — MQTT, BitTorrent, Supabase, Firebase, IPFS — are separate imports,
+each a one-line swap). Signalling is only how peers find each other; once a
+connection is up, game traffic is direct.
+
 The topology is a **star** — the three clients each connect to the host and to
 nobody else — which keeps peer connections to three and avoids the mesh
 scaling problems Trystero hits with many peers in one room.
@@ -46,7 +51,8 @@ corporate firewall (roughly 5–10% of connections) cannot connect at all, and
 there is no free fix — TURN relays real bandwidth.
 
 If that bites, Trystero also speaks to a self-hosted WebSocket relay. Swapping
-strategies is an import change; a relay routes through a server and so sidesteps
+strategies means one new implementation of the `Transport` interface and nothing
+else; a relay routes through a server and so sidesteps
 NAT entirely. A Cloudflare Worker + Durable Object is the natural home (bills
 inbound messages only, at 20:1, outbound free — about 11 hours of play per day
 on the free tier). **Nothing below changes if the transport is swapped**: the
@@ -262,6 +268,7 @@ resolution-dependent drift.
 | File | Purpose |
 |---|---|
 | `src/net/Protocol.ts` | `PROTOCOL_VERSION`, message types, snapshot encode/decode |
+| `src/net/Transport.ts` | The one interface the net code needs from the network, and the Trystero implementation of it |
 | `src/net/NetHost.ts` | Room hosting, peer seating, snapshot broadcast, input intake |
 | `src/net/NetClient.ts` | Join, handshake, snapshot buffer, interpolation, apply-to-state |
 | `src/net/RemotePlayerInput.ts` | `PlayerInput` fed from the wire |
@@ -343,19 +350,38 @@ turn waits at a wall and fires when the corridor opens, the buffer expires after
 8 frames, stale sequence numbers are dropped, malformed payloads decode to
 `null`, and a snapshot survives the round trip.
 
-### Phase 2 — Transport and lobby
+### Phase 2 — Transport and lobby ✅
 
-- `npm i trystero`.
-- `NetHost` / `NetClient`: join, handshake, version check, roster.
-- Lobby screens: host shows the 6-digit code and who has joined; join takes a
-  code. Code entry reuses the `showInitialsEntry` overlay pattern for keyboards,
-  with canvas-drawn digit selection for gamepad and touch.
-- Menu gains `HOST ONLINE` / `JOIN ONLINE` next to the existing flow.
-- The host lobby is a screen the game returns to, not a one-shot step before
-  `start()` — Phase 3's game-over path comes back to it with the room still up.
+- `trystero` added, behind `src/net/Transport.ts`. The net code asks the network
+  for four things — send to one peer or all, peers joining, peers leaving, leave
+  — so the relay escape hatch above is a second implementation of that interface
+  and no change anywhere else. It is also what let the handshake be tested
+  without a network at all.
+- `NetHost` seats joiners (lowest free id, so a seat freed by a leaver is reused)
+  and refuses them with `protocol`, `full` or `in-progress`. `NetClient` greets
+  every peer it meets, since only a host answers a hello, and gives up after
+  20 s — long enough for a slow relay handshake, short enough that a wrong code
+  does not look like a hang.
+- The menu gained `HOST ONLINE` / `JOIN ONLINE` below `START GAME`. It is a list
+  now, navigable by arrows, d-pad or swipe — but `START GAME` is first and
+  selected, so tap-tap-play reaches the same place it always did.
+- Code entry follows `showInitialsEntry`: a transparent full-screen input, so a
+  keyboard types into it and a tap raises the mobile keypad. Gamepads get the
+  arcade treatment instead — left/right for the slot, up/down to spin the digit —
+  since there is no text field a d-pad can drive.
+- Names come from the initials the player last entered on the high-score screen
+  (`Stats.loadInitials`), so nobody is asked to name themselves twice. Anyone who
+  has never placed gets a tag generated once and kept.
 
-**Done when** two browsers reach a shared lobby by code and see each other's
-names. No gameplay yet.
+**No START button yet** — the lobby says so rather than offering a control that
+cannot work. It arrives with Phase 3, along with the game it starts.
+
+**Verified:** three browser profiles joined one code over real WebRTC and each
+saw the full roster; seats fill 2→3→4 and refuse a fifth; an older protocol
+version is refused; a freed seat is reused; the host leaving tells everyone; a
+code with no lobby behind it times out. Signalling ran against a local relay,
+so the public relay list and real-world NAT traversal are the parts still
+unproven.
 
 ### Phase 3 — Playable
 
@@ -427,6 +453,7 @@ the `welcome` message already carries whatever state a latecomer needs.
 | Public tracker flakiness or slow joins | Show a "connecting…" state; Trystero can try multiple strategies |
 | Version skew between cached tabs | `PROTOCOL_VERSION` in the handshake, refuse with a reload prompt |
 | Merge conflicts with editor work | Net code lives in `src/net/`; only `Game.ts` is shared. Land in small merges rather than one long-lived branch |
+| Trystero costs every player ~137 KB of bundle, offline play included | Acceptable gzipped; if it matters, a dynamic `import()` of `src/net/` keeps it off the local-play path, at the cost of an esbuild splitting step |
 
 ### Performance note
 
@@ -449,8 +476,8 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 | Shared input-apply helper extracted | ✅ Complete — Keyboard, Gamepad and Touch |
 | `RemotePlayerInput` | ✅ Complete — driven by the debug loopback |
 | Protocol types, version, snapshot codec | ✅ Complete |
-| Trystero transport, host + client | ⬜ Planned |
-| Lobby screens and code entry | ⬜ Planned |
+| Trystero transport, host + client | ✅ Complete — behind a `Transport` seam |
+| Lobby screens and code entry | ✅ Complete |
 | Snapshot broadcast and apply | ⬜ Planned |
 | Event-driven client audio | ⬜ Planned |
 | Interpolation | ⬜ Planned |
