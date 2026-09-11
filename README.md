@@ -44,3 +44,4 @@ MAP-EDITOR.md        # planned level editor spec
 ## Documentation
 
 - `MAP-EDITOR.md` — level editor implementation plan
+- `MULTIPLAYER.md` — online co-op implementation plan
