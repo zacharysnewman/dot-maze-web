@@ -1512,6 +1512,12 @@ function joinFailureText(failure: JoinFailure): string {
 
 function enterLobby(): void {
     lobbyRunning = true;
+    // The lobby is a menu screen and should sound like one, whether it is the
+    // first one or the one a finished game came back to.
+    if (audioUnlocked && !menuMusicPlaying) {
+        Sound.playMenuMusic();
+        menuMusicPlaying = true;
+    }
     document.onkeydown = (e: KeyboardEvent) => {
         if (e.key === 'Escape') leaveLobby();
         else if (e.key === 'Enter' || e.key === ' ') hostStartGame();
@@ -1716,6 +1722,11 @@ function startClientGame(level: LevelData, state: Snapshot | null = null): void 
     if (netClient === null) return;
     if (clientRunning) stopClientGame();
     exitLobbyScreen();
+
+    // The host's own `start()` does this for the host. A client never goes
+    // through it, so without this the menu music plays over the whole game.
+    Sound.stopMenuMusic();
+    menuMusicPlaying = false;
 
     const inputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
     if (GamepadPlayerInput.connectedIndices().includes(0)) inputs.push(new GamepadPlayerInput(0));

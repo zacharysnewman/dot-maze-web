@@ -544,6 +544,73 @@ leaves the client trying, and on the menu once the window runs out.
 
 ---
 
+## Planned: couch co-op, and eight players
+
+The phases above are built and playable. These three are not started.
+
+Today an online game seats exactly one player per machine: `hostStartGame`
+builds one local slot and one per remote seat. Two people on a sofa cannot join
+a friend together, and nothing about that is a small switch — it is the one
+assumption the whole net layer is built on.
+
+### Phase 6 — Seats become groups
+
+Everything so far assumes one peer is one player. That assumption is the only
+thing standing between this and a sofa full of people joining a friend online.
+
+- `HostSeat` holds one `playerId` and one `RemotePlayerInput`. It becomes a
+  group: `playerIds: number[]` and an input per id. `nextPlayerId()` becomes
+  `allocateIds(count)`, and the host reserves `1..L` for its own locals instead
+  of silently taking id 1.
+- **Protocol 3.** `hello` says how many players the machine brings; `welcome`
+  answers with a list of ids, possibly shorter than asked; `input` says which
+  player it is for. `Snapshot.ack` already keys by player id, so it does not
+  change.
+- `ClientGame` holds one `selfPlayerId`, one `localInput` and one prediction
+  history. Each becomes keyed by id, and `writePositions` skips the set of
+  predicted players rather than the one.
+- Presence stays per **machine**, not per player: a group goes quiet together,
+  sits out together, and comes back together. `clientId` still keys the held
+  seat — it just holds several ids now.
+
+**Done when** a two-machine game behaves exactly as it does today, through
+group-shaped code, with one local player on each side. All of it is provable
+against the fake transport before a browser is involved.
+
+### Phase 7 — More than one of you per machine
+
+- A "how many of you are here?" step before hosting or joining. The player
+  select screen is nearly it already — it builds one to four local slots with
+  the right device mapping — but it ends by calling `start()` rather than
+  handing the count back.
+- The lobby roster is keyed by player id, so it needs to group by machine.
+  Without that, four rows cannot be told apart from two people with two pads
+  each.
+- Partial admission: asking for three seats when two are free has to mean
+  something better than a refusal.
+
+**Done when** two people on one keyboard and pad play with a friend online.
+
+### Phase 8 — Eight
+
+- `MAX_PLAYERS` 8. The snapshot, the roster and the id allocator already take
+  it; the lobby's four roster rows become two columns of four.
+- **Visuals cycle in two dimensions.** Props repeat every four — none,
+  backpack, bow, pill — and the body colour changes every four: players 1-4
+  yellow, 5-8 green. Four players or fewer therefore look exactly as they do
+  now, which is the point: the cycling only appears once the current visuals
+  have run out.
+- Prop colours are currently fixed (`#8B5E3C` brown backpack, `#b44fff` violet
+  bow) and will need to derive from the body colour, or gain an outline, once
+  bodies stop being yellow.
+- The palette is tighter than it looks. Red, cyan, hotpink and orange are
+  enemies; `#0000cc` and white are frightened and flashing; white again is
+  eyes. Yellow, green and violet are comfortably distinct from all of that. A
+  fourth player colour is hard, which is the real reason the cap is 8 and not
+  16.
+
+---
+
 ## Decisions
 
 | Question | Decision | Why |
@@ -554,6 +621,40 @@ leaves the client trying, and on the menu once the window runs out.
 | Host leaves | **Everyone to the menu** | Host migration needs serialisable timers — the same wall that blocks rollback |
 | Client screen at game over | **GAME OVER + host status + LEAVE** | A client cannot otherwise distinguish a host typing initials from a dead connection |
 | Host picks the level | **Yes**, from the library before hosting | The editor is the most active part of the project; playing a friend's maze together is the payoff |
+| Player cap | **8** | 2 colours × 4 props, and a host upstream that stays inside a normal connection; see below |
+| Local players per machine | **Up to 4** | The player select screen already builds them; nothing in the protocol cares |
+| Lives with a crowd | **Left exactly as they are** | See below — it gets easier, deliberately |
+
+### Why the cap is 8, not 16
+
+Measured, not guessed. The host sends every client a full snapshot, so its
+upstream is peers × snapshot size × 20 Hz:
+
+| Players | Snapshot | All on their own machines | Two per machine |
+|---|---|---|---|
+| 4 | 887 B | 0.4 Mbit | 0.1 Mbit |
+| 8 | 1,331 B | **1.5 Mbit** | 0.6 Mbit |
+| 16 | 2,233 B | **5.2 Mbit** | 2.4 Mbit |
+
+At 16, a host whose friends each join from their own machine needs 5.2 Mbit/s
+of sustained upload and fifteen simultaneous peer connections — beyond a normal
+home connection, and far beyond a phone. 16 only works if players cluster onto
+a few machines, which is a constraint nobody would guess from the number.
+
+At 8 it holds up however people arrange themselves: 1.5 Mbit/s in the worst
+case, seven connections. If 16 is ever wanted, the fix is delta-encoded binary
+snapshots — roughly a tenth of the size — not a bigger constant.
+
+### Lives with a crowd: easier, on purpose
+
+Nothing changes here, and the effect is worth stating so it is not mistaken for
+a bug. A shared life is only spent when *everyone* is down at once; a player
+who dies while others live simply sits out until the next level, which revives
+them. With eight players a total wipe is rare, so the pool is barely touched
+and the real mechanic becomes "how many of us are still up right now".
+
+More players therefore makes the game easier rather than harder. That is the
+intended shape: a crowd in one maze is supposed to be a little ridiculous.
 
 ### Mid-level joining, dropped
 
@@ -599,8 +700,10 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 
 ## Implementation Status
 
-All five phases are done, and so is automatic reconnection. What is left is the
-relay fallback, if NAT traversal proves too lossy in real use.
+All five phases are done, and so is automatic reconnection. Phases 6 to 8 —
+couch co-op alongside online play, up to eight players — are planned and not
+started. The relay fallback is still open, if NAT traversal proves too lossy in
+real use.
 
 | Feature | Status |
 |---|---|
@@ -618,6 +721,9 @@ relay fallback, if NAT traversal proves too lossy in real use.
 | Waiting banner when the host goes quiet | ✅ Complete |
 | Lobby code in the HUD during an online game | ✅ Complete — the lobby is the only other place it appears |
 | Marker over your own player online | ✅ Complete — the props say which slot, this says which is yours |
+| Seats become groups (protocol 3, per-player prediction) | ⬜ Planned — Phase 6 |
+| Several local players on one machine, online | ⬜ Planned — Phase 7 |
+| Eight players, cycling colours and props | ⬜ Planned — Phase 8 |
 | Automatic reconnection (client retries by itself) | ✅ Complete — 28 s of retries against a 30 s seat hold |
 | Room survives game over, host restarts from the lobby | ✅ Complete |
 | Host picks a library level before hosting | ✅ Complete — and between games, not only before the first |
