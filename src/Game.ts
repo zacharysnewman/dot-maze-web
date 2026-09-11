@@ -1509,6 +1509,7 @@ function enterLobby(): void {
     document.onkeydown = (e: KeyboardEvent) => {
         if (e.key === 'Escape') leaveLobby();
         else if (e.key === 'Enter' || e.key === ' ') hostStartGame();
+        else if (e.key === 'm' || e.key === 'M') openMapPicker();
     };
     gameState.canvas.addEventListener('click', onLobbyTap);
     gameState.canvas.addEventListener('touchend', onLobbyTouch, { passive: false } as EventListenerOptions);
@@ -1557,6 +1558,7 @@ function openMapPicker(): void {
     openLibraryModal({
         title: '🌐 Pick a map to host',
         emptyMessage: 'No saved maps yet.<br>Build one in the editor and save it to your library.',
+        footer: 'TAP · OR D-PAD MOVE, A SELECT, B CLOSE',
         lead: {
             label: '▦ The classic maze',
             onClick: (controls) => use(Levels.level1Data, controls.close),
@@ -1587,23 +1589,58 @@ function canvasPoint(clientX: number, clientY: number): [number, number] {
     ];
 }
 
-let lobbyPrevA = false;
-let lobbyPrevB = false;
+// Standard gamepad face and d-pad indices, for the lobby's three controls.
+const PAD_A = 0, PAD_B = 1, PAD_Y = 3, PAD_UP = 12, PAD_DOWN = 13;
+let lobbyPrevPad: boolean[] = [];
 let clientPrevB = false;
 
 function lobbyFrame(): void {
     if (!lobbyRunning || lobbyView === null) return;
 
     const gp = (navigator.getGamepads ? navigator.getGamepads() : [])[0] ?? null;
-    const bDown = gp?.buttons[1]?.pressed ?? false;
-    const aDown = (gp?.buttons[0]?.pressed ?? false) || (gp?.buttons[3]?.pressed ?? false);
-    if (bDown && !lobbyPrevB) { lobbyPrevB = bDown; leaveLobby(); return; }
-    lobbyPrevB = bDown;
-    if (aDown && !lobbyPrevA) { lobbyPrevA = aDown; hostStartGame(); return; }
-    lobbyPrevA = aDown;
+    const pressed = gp === null ? [] : Array.from(gp.buttons, b => b.pressed);
+    const rising = (index: number): boolean => (pressed[index] ?? false) && !(lobbyPrevPad[index] ?? false);
+
+    // While the map picker is up it owns the pad, or A would start the game
+    // behind it.
+    const picker = document.getElementById('ed-library-modal');
+    if (picker !== null) {
+        drivePickerWithPad(picker, rising);
+    } else if (rising(PAD_B)) {
+        lobbyPrevPad = pressed;
+        leaveLobby();
+        return;
+    } else if (rising(PAD_Y)) {
+        openMapPicker();
+    } else if (rising(PAD_A)) {
+        lobbyPrevPad = pressed;
+        hostStartGame();
+        return;
+    }
+    lobbyPrevPad = pressed;
 
     drawLobbyScreen(lobbyView);
     window.requestAnimationFrame(lobbyFrame);
+}
+
+/**
+ * The map picker is a DOM list, which a gamepad cannot click. Move the focus
+ * with the d-pad and press the focused button with A, so opening it with Y is
+ * not a door into a room with no handle.
+ */
+function drivePickerWithPad(picker: HTMLElement, rising: (index: number) => boolean): void {
+    const buttons = Array.from(picker.querySelectorAll('button'));
+    if (buttons.length === 0) return;
+
+    const focused = Math.max(0, buttons.indexOf(document.activeElement as HTMLButtonElement));
+    const step = (delta: number): void => {
+        buttons[(focused + delta + buttons.length) % buttons.length].focus();
+    };
+
+    if (rising(PAD_DOWN)) step(1);
+    if (rising(PAD_UP)) step(-1);
+    if (rising(PAD_A)) buttons[focused].click();
+    if (rising(PAD_B)) (picker.querySelector('#ed-lib-close') as HTMLButtonElement | null)?.click();
 }
 
 /**

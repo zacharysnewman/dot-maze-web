@@ -106,7 +106,9 @@ export function drawLobbyScreen(view: LobbyView): void {
     ctx.fillStyle = '#555';
     ctx.font = `${Math.round(unit * 0.5)}px monospace`;
     ctx.fillText(
-        view.role === 'host' ? 'START: TAP - ENTER - A      LEAVE: TAP - ESC - B' : 'LEAVE: TAP - ESC - B',
+        view.role === 'host'
+            ? 'START  TAP/ENTER/A     MAP  TAP/M/Y     LEAVE  TAP/ESC/B'
+            : 'LEAVE  TAP/ESC/B',
         cx, unit * 33.4,
     );
 }
