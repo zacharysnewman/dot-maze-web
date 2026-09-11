@@ -6,7 +6,8 @@ import { exitTestGame, startTestGame, viewportSize } from '../Game';
 import type { LevelData, TileValue } from '../types';
 import { TILE_EMPTY, TILE_ENEMY_DOOR } from '../tiles';
 import { validateLevel, type ValidationResult } from './Validate';
-import { saveLevel, listLevels, deleteLevel, formatDate } from './LevelLibrary';
+import { saveLevel, deleteLevel, listLevels } from './LevelLibrary';
+import { openLibraryModal } from './LibraryModal';
 import { loadPrefs, savePrefs } from './EditorPrefs';
 import {
     EDIT_MAX_Y,
@@ -984,146 +985,58 @@ function setPanelOpen(open: boolean): void {
 
 // ── Library Modal ─────────────────────────────────────────────────────────────
 
-function openLibraryModal(
+function openEditorLibrary(
     state: EditorState,
     nameInput: HTMLInputElement,
     onLoaded: (id: string) => void,
 ): void {
-    document.getElementById('ed-library-modal')?.remove();
-
-    const overlay = document.createElement('div');
-    overlay.id = 'ed-library-modal';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-label', 'My maps');
-    overlay.innerHTML = `
-    <style>
-    #ed-library-modal {
-        position: fixed; inset: 0; background: rgba(0,0,0,0.85);
-        z-index: 200; display: flex; align-items: center; justify-content: center;
-        font-family: monospace; padding: 12px;
-    }
-    #ed-lib-box {
-        background: #111; border: 2px solid #666; border-radius: 12px;
-        padding: 18px; width: 100%; max-width: 460px;
-        max-height: 86vh; display: flex; flex-direction: column; gap: 12px;
-        color: #eee;
-    }
-    #ed-lib-box h3 { color: #ff0; margin: 0; font-size: 20px; }
-    #ed-lib-list {
-        overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px;
-        touch-action: pan-y; overscroll-behavior: contain;
-    }
-    .ed-lib-entry {
-        background: #1a1a1a; border: 1px solid #333; border-radius: 8px;
-        padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
-    }
-    .ed-lib-entry-name { font-size: 16px; color: #ff0; font-weight: bold; }
-    .ed-lib-entry-meta { font-size: 12px; color: #999; }
-    .ed-lib-entry-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-    .ed-lib-entry-actions button {
-        flex: 1 1 90px; min-height: 44px; background: #222; color: #eee;
-        border: 1px solid #555; border-radius: 6px; padding: 6px 8px; cursor: pointer;
-        font-family: monospace; font-size: 14px;
-    }
-    #ed-library-modal button:focus-visible, #ed-library-modal :focus-visible {
-        outline: 3px solid #ff0; outline-offset: 2px;
-    }
-    .ed-lib-btn-load  { color: #9f9 !important; border-color: #4a4 !important; }
-    .ed-lib-btn-test  { color: #9bf !important; border-color: #46a !important; }
-    .ed-lib-btn-del   { color: #f88 !important; border-color: #a33 !important; }
-    #ed-lib-empty { color: #888; font-size: 14px; text-align: center; padding: 20px 0; }
-    #ed-lib-close {
-        background: #222; color: #eee; border: 1px solid #666;
-        border-radius: 6px; padding: 10px 16px; cursor: pointer; min-height: 48px;
-        font-family: monospace; font-size: 16px; align-self: stretch;
-    }
-    </style>
-    <div id="ed-lib-box">
-        <h3>📂 My Maps</h3>
-        <div id="ed-lib-list"></div>
-        <button id="ed-lib-close">✕ Close</button>
-    </div>`;
-    document.body.appendChild(overlay);
-
-    // Prevent canvas events
-    overlay.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
-    overlay.addEventListener('touchend',   e => e.stopPropagation(), { passive: true });
-    overlay.addEventListener('click',      e => e.stopPropagation());
-    overlay.addEventListener('mousedown',  e => e.stopPropagation());
-
-    function closeModal(): void { overlay.remove(); }
-    const closeBtn = document.getElementById('ed-lib-close')!;
-    closeBtn.onclick = closeModal;
-    closeBtn.focus();
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
-    overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
-
-    function refreshList(): void {
-        const listEl = document.getElementById('ed-lib-list')!;
-        const entries = listLevels();
-        if (entries.length === 0) {
-            listEl.innerHTML = '<div id="ed-lib-empty">No saved maps yet.<br>Use "Save to Library" to add one.</div>';
-            return;
-        }
-        listEl.innerHTML = '';
-        for (const entry of [...entries].reverse()) {
-            const counts = countUsage(entry.level);
-            const div = document.createElement('div');
-            div.className = 'ed-lib-entry';
-            div.innerHTML = `
-                <div class="ed-lib-entry-name"></div>
-                <div class="ed-lib-entry-meta"></div>
-                <div class="ed-lib-entry-actions">
-                    <button class="ed-lib-btn-load">📂 Load</button>
-                    <button class="ed-lib-btn-test">▶ Test</button>
-                    <button class="ed-lib-btn-del">🗑 Delete</button>
-                </div>`;
-            div.querySelector('.ed-lib-entry-name')!.textContent = entry.level.name || '(Untitled)';
-            div.querySelector('.ed-lib-entry-meta')!.textContent =
-                `${formatDate(entry.savedAt)} · ${counts.dot} dots · ${counts.power} power`;
-
-            const btns = div.querySelectorAll('button');
-            const loadBtn = btns[0] as HTMLButtonElement;
-            const testBtn = btns[1] as HTMLButtonElement;
-            const delBtn  = btns[2] as HTMLButtonElement;
-
-            loadBtn.addEventListener('click', () => {
-                pushUndo(state);
-                const loaded = deepCopyLevel(entry.level);
-                Object.assign(state.level, loaded);
-                state.libraryId = entry.id;
-                if (entry.tileSetId) state.prefs.tileSetId = entry.tileSetId;
-                nameInput.value = state.level.name;
-                recountUsage(state);
-                syncToRenderer(state);
-                scheduleAutosave(state.level);
-                savePrefs(state.prefs);
-                onLoaded(entry.id);
-                closeModal();
-            });
-
-            testBtn.addEventListener('click', () => {
-                const result = validateLevel(entry.level, activeTileSet(state));
-                if (!result.valid) {
-                    alert('Level has errors:\n' + result.errors.map(e => `• ${e}`).join('\n'));
-                    return;
-                }
-                closeModal();
-                runTestGame(state, deepCopyLevel(entry.level));
-            });
-
-            delBtn.addEventListener('click', () => {
-                if (!confirm(`Delete "${entry.level.name || 'Untitled'}"?`)) return;
-                deleteLevel(entry.id);
-                if (state.libraryId === entry.id) state.libraryId = null;
-                refreshList();
-            });
-
-            listEl.appendChild(div);
-        }
-    }
-    refreshList();
+    openLibraryModal({
+        title: '📂 My Maps',
+        emptyMessage: 'No saved maps yet.<br>Use "Save to Library" to add one.',
+        actions: (entry) => [
+            {
+                label: '📂 Load',
+                tone: 'load',
+                onClick: (_e, controls) => {
+                    pushUndo(state);
+                    const loaded = deepCopyLevel(entry.level);
+                    Object.assign(state.level, loaded);
+                    state.libraryId = entry.id;
+                    if (entry.tileSetId) state.prefs.tileSetId = entry.tileSetId;
+                    nameInput.value = state.level.name;
+                    recountUsage(state);
+                    syncToRenderer(state);
+                    scheduleAutosave(state.level);
+                    savePrefs(state.prefs);
+                    onLoaded(entry.id);
+                    controls.close();
+                },
+            },
+            {
+                label: '▶ Test',
+                tone: 'test',
+                onClick: (_e, controls) => {
+                    const result = validateLevel(entry.level, activeTileSet(state));
+                    if (!result.valid) {
+                        alert('Level has errors:\n' + result.errors.map(e => `• ${e}`).join('\n'));
+                        return;
+                    }
+                    controls.close();
+                    runTestGame(state, deepCopyLevel(entry.level));
+                },
+            },
+            {
+                label: '🗑 Delete',
+                tone: 'delete',
+                onClick: (_e, controls) => {
+                    if (!confirm(`Delete "${entry.level.name || 'Untitled'}"?`)) return;
+                    deleteLevel(entry.id);
+                    if (state.libraryId === entry.id) state.libraryId = null;
+                    controls.refresh();
+                },
+            },
+        ],
+    });
 }
 
 // ── Play-test ─────────────────────────────────────────────────────────────────
@@ -1802,7 +1715,7 @@ function buildPanel(state: EditorState, panelEl?: HTMLElement): HTMLElement {
         showToast(`Saved "${trimmed}" to your library`);
     };
     ui.libCount.onclick = () => {
-        openLibraryModal(state, ui!.name, (id) => {
+        openEditorLibrary(state, ui!.name, (id) => {
             state.libraryId = id;
             state.uiDirty = true;
         });

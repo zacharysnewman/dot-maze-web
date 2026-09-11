@@ -1,8 +1,8 @@
 import type { PlayerInput } from './PlayerInput';
+import { applyPlayerInput, bufferDir } from './PlayerInput';
 import type { Direction, IGameObject } from '../types';
 import { Sound } from '../static/Sound';
 
-const BUFFER_FRAMES = 8;
 const MIN_SWIPE_DISTANCE = 40;
 
 export class TouchPlayerInput implements PlayerInput {
@@ -56,28 +56,13 @@ export class TouchPlayerInput implements PlayerInput {
     }
 
     private applySwipe(dx: number, dy: number): void {
-        this.bufferedDir = Math.abs(dx) > Math.abs(dy)
+        bufferDir(this, Math.abs(dx) > Math.abs(dy)
             ? (dx < 0 ? 'left' : 'right')
-            : (dy < 0 ? 'up'   : 'down');
-        this.bufferedDirFramesLeft = BUFFER_FRAMES;
+            : (dy < 0 ? 'up'   : 'down'));
     }
 
     update(actor: IGameObject): void {
-        if (this.bufferedDir === null) return;
-        const dir = this.bufferedDir;
-        const tileOpen =
-            dir === 'left'  ? (actor.leftObject()   ?? 0) > 2 :
-            dir === 'right' ? (actor.rightObject()  ?? 0) > 2 :
-            dir === 'up'    ? (actor.topObject()    ?? 0) > 2 :
-                              (actor.bottomObject() ?? 0) > 2;
-        if (tileOpen) {
-            actor.moveDir = dir;
-            this.bufferedDir = null;
-            this.bufferedDirFramesLeft = 0;
-        } else {
-            this.bufferedDirFramesLeft--;
-            if (this.bufferedDirFramesLeft <= 0) this.bufferedDir = null;
-        }
+        applyPlayerInput(this, actor);
     }
 
     destroy(): void {

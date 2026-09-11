@@ -1,7 +1,6 @@
 import type { PlayerInput } from './PlayerInput';
+import { applyPlayerInput, bufferDir } from './PlayerInput';
 import type { Direction, IGameObject } from '../types';
-
-const BUFFER_FRAMES = 8;
 
 export class KeyboardPlayerInput implements PlayerInput {
     leftPressed  = false;
@@ -17,10 +16,10 @@ export class KeyboardPlayerInput implements PlayerInput {
     constructor() {
         this.onKeyDown = (e: KeyboardEvent) => {
             switch (e.key) {
-                case 'ArrowLeft':  this.leftPressed  = true; this.buffer('left');  break;
-                case 'ArrowUp':    this.upPressed    = true; this.buffer('up');    break;
-                case 'ArrowRight': this.rightPressed = true; this.buffer('right'); break;
-                case 'ArrowDown':  this.downPressed  = true; this.buffer('down');  break;
+                case 'ArrowLeft':  this.leftPressed  = true; bufferDir(this, 'left');  break;
+                case 'ArrowUp':    this.upPressed    = true; bufferDir(this, 'up');    break;
+                case 'ArrowRight': this.rightPressed = true; bufferDir(this, 'right'); break;
+                case 'ArrowDown':  this.downPressed  = true; bufferDir(this, 'down');  break;
             }
         };
         this.onKeyUp = (e: KeyboardEvent) => {
@@ -35,33 +34,8 @@ export class KeyboardPlayerInput implements PlayerInput {
         document.addEventListener('keyup',   this.onKeyUp);
     }
 
-    private buffer(dir: Direction): void {
-        this.bufferedDir = dir;
-        this.bufferedDirFramesLeft = BUFFER_FRAMES;
-    }
-
     update(actor: IGameObject): void {
-        if (this.leftPressed  && (actor.leftObject()   ?? 0) > 2) actor.moveDir = 'left';
-        if (this.upPressed    && (actor.topObject()    ?? 0) > 2) actor.moveDir = 'up';
-        if (this.rightPressed && (actor.rightObject()  ?? 0) > 2) actor.moveDir = 'right';
-        if (this.downPressed  && (actor.bottomObject() ?? 0) > 2) actor.moveDir = 'down';
-
-        if (this.bufferedDir !== null) {
-            const dir = this.bufferedDir;
-            const tileOpen =
-                dir === 'left'  ? (actor.leftObject()   ?? 0) > 2 :
-                dir === 'right' ? (actor.rightObject()  ?? 0) > 2 :
-                dir === 'up'    ? (actor.topObject()    ?? 0) > 2 :
-                                  (actor.bottomObject() ?? 0) > 2;
-            if (tileOpen) {
-                actor.moveDir = dir;
-                this.bufferedDir = null;
-                this.bufferedDirFramesLeft = 0;
-            } else {
-                this.bufferedDirFramesLeft--;
-                if (this.bufferedDirFramesLeft <= 0) this.bufferedDir = null;
-            }
-        }
+        applyPlayerInput(this, actor);
     }
 
     destroy(): void {

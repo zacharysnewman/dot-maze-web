@@ -9,5 +9,8 @@
   "devDependencies": {
     "esbuild": "^0.25.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "trystero": "^0.25.4"
   }
 }

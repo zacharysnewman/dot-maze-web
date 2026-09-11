@@ -1,7 +1,7 @@
 import type { PlayerInput } from './PlayerInput';
+import { applyPlayerInput, bufferDir } from './PlayerInput';
 import type { Direction, IGameObject } from '../types';
 
-const BUFFER_FRAMES = 8;
 const DEADZONE = 0.3;
 
 // Standard gamepad mapping button indices
@@ -82,37 +82,15 @@ export class GamepadPlayerInput implements PlayerInput {
         this.downPressed  = down;
 
         // Buffer on rising edge (fresh press)
-        if (left  && !this.prevLeft)  { this.bufferedDir = 'left';  this.bufferedDirFramesLeft = BUFFER_FRAMES; }
-        if (right && !this.prevRight) { this.bufferedDir = 'right'; this.bufferedDirFramesLeft = BUFFER_FRAMES; }
-        if (up    && !this.prevUp)    { this.bufferedDir = 'up';    this.bufferedDirFramesLeft = BUFFER_FRAMES; }
-        if (down  && !this.prevDown)  { this.bufferedDir = 'down';  this.bufferedDirFramesLeft = BUFFER_FRAMES; }
+        if (left  && !this.prevLeft)  bufferDir(this, 'left');
+        if (right && !this.prevRight) bufferDir(this, 'right');
+        if (up    && !this.prevUp)    bufferDir(this, 'up');
+        if (down  && !this.prevDown)  bufferDir(this, 'down');
 
         this.prevLeft = left; this.prevRight = right;
         this.prevUp   = up;   this.prevDown  = down;
 
-        // Apply held direction immediately if tile is open
-        if (left  && (actor.leftObject()   ?? 0) > 2) actor.moveDir = 'left';
-        if (up    && (actor.topObject()    ?? 0) > 2) actor.moveDir = 'up';
-        if (right && (actor.rightObject()  ?? 0) > 2) actor.moveDir = 'right';
-        if (down  && (actor.bottomObject() ?? 0) > 2) actor.moveDir = 'down';
-
-        // Retry buffered direction each frame
-        if (this.bufferedDir !== null) {
-            const dir = this.bufferedDir;
-            const tileOpen =
-                dir === 'left'  ? (actor.leftObject()   ?? 0) > 2 :
-                dir === 'right' ? (actor.rightObject()  ?? 0) > 2 :
-                dir === 'up'    ? (actor.topObject()    ?? 0) > 2 :
-                                  (actor.bottomObject() ?? 0) > 2;
-            if (tileOpen) {
-                actor.moveDir = dir;
-                this.bufferedDir = null;
-                this.bufferedDirFramesLeft = 0;
-            } else {
-                this.bufferedDirFramesLeft--;
-                if (this.bufferedDirFramesLeft <= 0) this.bufferedDir = null;
-            }
-        }
+        applyPlayerInput(this, actor);
     }
 
     destroy(): void {

@@ -1,6 +1,8 @@
 import { gameState } from '../game-state';
+import { NetEvents } from '../net/NetEvents';
 
 const LS_KEY = 'player-scores';
+const LS_INITIALS_KEY = 'player-initials';
 
 export interface HighScoreEntry {
     initials: string;
@@ -58,6 +60,25 @@ export class Stats {
         const top10 = scores.slice(0, 10);
         localStorage.setItem(LS_KEY, JSON.stringify(top10));
         Stats.highScore = top10[0].score;
+        Stats.saveInitials(initials);
+    }
+
+    /**
+     * The last initials this player typed. Online co-op shows them on the lobby
+     * roster, so the name a player already identifies with carries over instead
+     * of asking for it again.
+     */
+    static loadInitials(): string | null {
+        try {
+            const stored = localStorage.getItem(LS_INITIALS_KEY);
+            return stored !== null && stored.length > 0 ? stored : null;
+        } catch { return null; }
+    }
+
+    static saveInitials(initials: string): void {
+        const cleaned = initials.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 3);
+        if (cleaned.length === 0) return;
+        try { localStorage.setItem(LS_INITIALS_KEY, cleaned); } catch { /* private mode */ }
     }
 
     static addToScore(points: number): void {
@@ -67,6 +88,7 @@ export class Stats {
         if (wasBelow10k && Stats.currentScore >= 10000 && !Stats.extraLifeAwardedThisGame) {
             Stats.extraLifeAwardedThisGame = true;
             gameState.sharedLives++;
+            NetEvents.record({ e: 'extraLife' });
         }
     }
 
