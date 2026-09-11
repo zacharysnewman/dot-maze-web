@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network Debug</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    padding: 16px;
+  }
+  h1 { color: #fff; font-size: 16px; margin-bottom: 4px; }
+  .subtitle { color: #666; font-size: 11px; margin-bottom: 16px; line-height: 1.5; }
+  #status { color: #ffcc00; margin-bottom: 16px; min-height: 18px; }
+
+  .copy-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  button {
+    background: #2a2a2a;
+    color: #e0e0e0;
+    border: 1px solid #444;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    border-radius: 3px;
+  }
+  button:hover { background: #3a3a3a; border-color: #666; }
+  button:active { background: #222; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  #copy-btn.copied { color: #4caf50; border-color: #4caf50; }
+
+  .card {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+  .card-title {
+    color: #7ec8e3;
+    font-size: 12px;
+    margin-bottom: 2px;
+    word-break: break-all;
+  }
+  .card-meta {
+    color: #888;
+    font-size: 11px;
+    margin-bottom: 10px;
+  }
+
+  .section-label {
+    color: #aaa;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .section { margin-bottom: 10px; }
+  /* Server URLs are addresses, not headings — leave their case alone. */
+  .section-label.url { text-transform: none; color: #7ec8e3; }
+
+  .ok    { color: #4caf50; }
+  .warn  { color: #ff9800; }
+  .fail  { color: #ff5555; }
+  .muted { color: #666; }
+
+  .verdict {
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 3px;
+    border: 1px solid #333;
+    background: #222;
+    line-height: 1.5;
+  }
+  .verdict.ok   { border-color: #4caf50; background: #1c2a1c; }
+  .verdict.warn { border-color: #ff9800; background: #2a241c; }
+  .verdict.fail { border-color: #ff5555; background: #2a1c1c; }
+
+  .cand {
+    font-size: 11px;
+    color: #888;
+    word-break: break-all;
+    line-height: 1.5;
+  }
+  .cand .typ-relay { color: #4caf50; }
+  .cand .typ-srflx { color: #7ec8e3; }
+  .cand .typ-host  { color: #666; }
+
+  textarea {
+    width: 100%;
+    min-height: 150px;
+    background: #0d0d0d;
+    color: #e0e0e0;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  details { margin-bottom: 14px; }
+  summary { color: #aaa; font-size: 11px; cursor: pointer; margin-bottom: 8px; }
+  .env { color: #666; font-size: 11px; line-height: 1.6; word-break: break-all; }
+  .env b { color: #aaa; font-weight: normal; }
+</style>
+</head>
+<body>
+
+<h1>Network Debug</h1>
+<div class="subtitle">
+  Multiplayer needs a direct WebRTC connection between the two devices. On the same
+  Wi-Fi that is easy. On mobile data the carrier's NAT usually blocks it, and the
+  connection only works through a TURN relay.<br>
+  Run this on <b>both</b> devices — the laptop, and the phone on mobile data with Wi-Fi
+  switched off.
+</div>
+
+<div class="copy-bar">
+  <button id="run-btn">Run test</button>
+  <button id="copy-btn">Copy results</button>
+</div>
+
+<div id="status">Ready.</div>
+
+<div id="results"></div>
+
+<details>
+  <summary>ICE servers being tested (edit to try your own)</summary>
+  <textarea id="servers-json" spellcheck="false"></textarea>
+</details>
+
+<div class="card">
+  <div class="section-label">Environment</div>
+  <div class="env" id="env"></div>
+</div>
+
+<script>
+  // The STUN servers Trystero configures by default. The game ships no TURN
+  // server, which is the thing this page exists to test.
+  const STUN_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+  ];
+
+  // Candidate free relays, as published by the Open Relay Project. Whether
+  // these still accept the shared credentials is exactly what we are checking.
+  const TURN_SERVERS = [
+    { urls: 'turn:openrelay.metered.ca:80',                    username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443',                   username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turns:openrelay.metered.ca:443?transport=tcp',    username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:staticauth.openrelay.metered.ca:80',         username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:staticauth.openrelay.metered.ca:443',        username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turns:staticauth.openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  ];
+
+  const GATHER_TIMEOUT_MS = 12_000;
+
+  const statusEl  = document.getElementById('status');
+  const resultsEl = document.getElementById('results');
+  const serversEl = document.getElementById('servers-json');
+  const runBtn    = document.getElementById('run-btn');
+
+  serversEl.value = JSON.stringify(TURN_SERVERS, null, 2);
+
+  document.getElementById('env').innerHTML =
+    `<b>page:</b> ${location.href}<br>` +
+    `<b>agent:</b> ${navigator.userAgent}<br>` +
+    `<b>connection:</b> ${describeConnection()}`;
+
+  function describeConnection() {
+    const c = navigator.connection;
+    if (c === undefined || c === null) return 'unknown (navigator.connection unsupported)';
+    return [c.type, c.effectiveType].filter(v => v !== undefined).join(' / ') || 'unknown';
+  }
+
+  function candidateType(c) {
+    if (c.type !== undefined && c.type !== null) return c.type;
+    const m = /\btyp (\w+)/.exec(c.candidate);
+    return m === null ? '?' : m[1];
+  }
+
+  /** The IP:port a candidate advertises, which is what NAT rewrites. */
+  function candidateAddress(c) {
+    if (c.address !== undefined && c.address !== null) return `${c.address}:${c.port}`;
+    const parts = c.candidate.split(' ');
+    return parts.length > 5 ? `${parts[4]}:${parts[5]}` : '?';
+  }
+
+  /**
+   * Gather ICE candidates under one configuration and report everything that
+   * came back, including the errors — a TURN server that rejects the
+   * credentials answers with a 401, which is the useful part.
+   */
+  function gather(config) {
+    return new Promise(resolve => {
+      const candidates = [];
+      const errors = [];
+      let pc;
+
+      try {
+        pc = new RTCPeerConnection(config);
+      } catch (e) {
+        resolve({ candidates, errors: [{ url: '-', errorCode: 0, errorText: String(e) }], failed: String(e) });
+        return;
+      }
+
+      const finish = () => {
+        clearTimeout(timer);
+        pc.close();
+        resolve({ candidates, errors, failed: null });
+      };
+
+      const timer = setTimeout(finish, GATHER_TIMEOUT_MS);
+
+      pc.onicecandidate = e => {
+        if (e.candidate === null) { finish(); return; }
+        if (e.candidate.candidate === '') return;
+        candidates.push({
+          type: candidateType(e.candidate),
+          address: candidateAddress(e.candidate),
+          protocol: e.candidate.protocol ?? '?',
+          line: e.candidate.candidate,
+        });
+      };
+
+      pc.onicecandidateerror = e => {
+        errors.push({ url: e.url ?? '?', errorCode: e.errorCode, errorText: e.errorText ?? '' });
+      };
+
+      pc.createDataChannel('probe');
+      pc.createOffer()
+        .then(offer => pc.setLocalDescription(offer))
+        .catch(e => { clearTimeout(timer); pc.close(); resolve({ candidates, errors, failed: String(e) }); });
+    });
+  }
+
+  function card(title, meta) {
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.innerHTML = `<div class="card-title">${title}</div><div class="card-meta">${meta}</div>`;
+    resultsEl.append(el);
+    return el;
+  }
+
+  function addSection(parent, label, html, labelClass = '') {
+    const s = document.createElement('div');
+    s.className = 'section';
+    s.innerHTML = `<div class="section-label ${labelClass}">${label}</div>${html}`;
+    parent.append(s);
+    return s;
+  }
+
+  function renderCandidates(list) {
+    if (list.length === 0) return '<div class="cand muted">none</div>';
+    return list.map(c =>
+      `<div class="cand"><span class="typ-${c.type}">${c.type}</span> ${c.address} <span class="muted">${c.protocol}</span></div>`
+    ).join('');
+  }
+
+  function renderErrors(list) {
+    if (list.length === 0) return '';
+    return list.map(e => {
+      // 401 means the server is alive and refused these credentials; 701 and
+      // friends mean it could not be reached at all.
+      const cls = e.errorCode === 401 ? 'fail' : 'warn';
+      return `<div class="cand ${cls}">${e.errorCode} ${e.errorText} <span class="muted">${e.url}</span></div>`;
+    }).join('');
+  }
+
+  /**
+   * Two STUN servers, two mapped ports. A NAT that gives the same port to both
+   * is one WebRTC can punch through; a different port each time is symmetric
+   * NAT, where nothing but a relay will connect.
+   */
+  async function testNat() {
+    const el = card('NAT and STUN', 'Can this device be reached directly?');
+    addSection(el, 'status', '<div class="cand muted">gathering…</div>');
+
+    const results = await Promise.all(STUN_SERVERS.map(s => gather({ iceServers: [s] })));
+    el.querySelector('.section').remove();
+
+    const mapped = [];
+    results.forEach((r, i) => {
+      const srflx = r.candidates.filter(c => c.type === 'srflx');
+      const label = STUN_SERVERS[i].urls;
+      if (srflx.length > 0) mapped.push(srflx[0].address);
+      addSection(el, label, renderCandidates(srflx) + renderErrors(r.errors), 'url');
+    });
+
+    let verdict, cls;
+    if (mapped.length === 0) {
+      verdict = 'No public address at all — STUN is blocked here. Peer-to-peer cannot work on this network without a relay.';
+      cls = 'fail';
+    } else if (mapped.length === 1) {
+      verdict = `Public address ${mapped[0]}. Only one STUN server answered, so the NAT type is inconclusive.`;
+      cls = 'warn';
+    } else {
+      const ports = mapped.map(a => a.split(':').pop());
+      const ips = mapped.map(a => a.split(':').slice(0, -1).join(':'));
+      if (ports[0] === ports[1] && ips[0] === ips[1]) {
+        verdict = `Public address ${mapped[0]}, and it is the same towards both STUN servers — a NAT WebRTC can usually punch through.`;
+        cls = 'ok';
+      } else {
+        verdict = `Mapped to ${mapped.join(' and ')} — a different port per destination. This is symmetric NAT (typical of mobile data), and it is why the direct connection fails. Only a TURN relay will get through.`;
+        cls = 'fail';
+      }
+    }
+    addSection(el, 'verdict', `<div class="verdict ${cls}">${verdict}</div>`);
+    return { mapped, verdict };
+  }
+
+  /**
+   * Force `relay` transport, so the only candidate that can appear is one the
+   * TURN server allocated. If one shows up, that server works from here.
+   */
+  async function testTurn(servers) {
+    const el = card('TURN relays', 'Does a relay allocate for this device?');
+    const anyWorking = [];
+
+    await Promise.all(servers.map(async (server) => {
+      const section = addSection(el, server.urls, '<div class="cand muted">testing…</div>', 'url');
+      const r = await gather({ iceServers: [server], iceTransportPolicy: 'relay' });
+      const relays = r.candidates.filter(c => c.type === 'relay');
+      const works = relays.length > 0;
+      if (works) anyWorking.push(server.urls);
+      section.innerHTML =
+        `<div class="section-label url">${server.urls}</div>` +
+        `<div class="cand ${works ? 'ok' : 'fail'}">${works ? 'RELAY OK' : 'no relay candidate'}</div>` +
+        renderCandidates(relays) + renderErrors(r.errors) +
+        (r.failed === null ? '' : `<div class="cand fail">${r.failed}</div>`);
+    }));
+
+    const verdict = anyWorking.length > 0
+      ? `${anyWorking.length} of ${servers.length} relays work from this device. Adding one of these to the game fixes mobile data: ${anyWorking.join(', ')}`
+      : `No relay allocated. These servers are unusable from this device — either the credentials are dead or the relay is unreachable — so a different TURN server is needed.`;
+    addSection(el, 'verdict', `<div class="verdict ${anyWorking.length > 0 ? 'ok' : 'fail'}">${verdict}</div>`);
+    return { anyWorking, verdict };
+  }
+
+  async function run() {
+    runBtn.disabled = true;
+    resultsEl.innerHTML = '';
+    statusEl.textContent = 'Testing… this takes up to 15 seconds.';
+
+    let servers;
+    try {
+      servers = JSON.parse(serversEl.value);
+    } catch (e) {
+      statusEl.innerHTML = `<span class="fail">ICE server list is not valid JSON: ${e}</span>`;
+      runBtn.disabled = false;
+      return;
+    }
+
+    const nat = await testNat();
+    const turn = await testTurn(servers);
+
+    statusEl.innerHTML = turn.anyWorking.length > 0
+      ? '<span class="ok">Done — a working relay was found.</span>'
+      : '<span class="fail">Done — no working relay.</span>';
+    runBtn.disabled = false;
+    window.__lastResults = { nat, turn, agent: navigator.userAgent, connection: describeConnection() };
+  }
+
+  runBtn.addEventListener('click', run);
+
+  document.getElementById('copy-btn').addEventListener('click', () => {
+    const text = `dot-maze net test\n${navigator.userAgent}\nconnection: ${describeConnection()}\n\n` +
+      resultsEl.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      const b = document.getElementById('copy-btn');
+      b.classList.add('copied');
+      b.textContent = 'Copied';
+      setTimeout(() => { b.classList.remove('copied'); b.textContent = 'Copy results'; }, 1500);
+    });
+  });
+</script>
+
+</body>
+</html>
