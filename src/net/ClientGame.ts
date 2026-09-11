@@ -11,7 +11,7 @@ import { Time } from '../static/Time';
 import type { Direction, IGameObject, LevelData, PlayerState } from '../types';
 import { RemotePlayerInput } from './RemotePlayerInput';
 import type { InputMsg, NetEvent, Snapshot, SnapshotPlayer } from './Protocol';
-import { tileFromIndex } from './Protocol';
+import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, tileFromIndex } from './Protocol';
 import { TILE_DOT, TILE_EMPTY, TILE_POWER } from '../tiles';
 
 const ENEMY_COLORS = ['red', 'cyan', 'hotpink', 'orange'] as const;
@@ -471,13 +471,27 @@ function playEvent(event: NetEvent): void {
     switch (event.e) {
         case 'dot':        Sound.dot();        break;
         case 'power':      Sound.energizer();  break;
-        case 'eatEnemy':   Sound.enemyEaten(); break;
         case 'death':      Sound.death();      break;
         case 'levelClear': Sound.levelClear(); break;
-        // The fruit and the extra life are scored, not sounded, on the host.
+        case 'eatEnemy':
+            Sound.enemyEaten();
+            showScorePopup(event.x, event.y, event.score, ENEMY_POPUP_SECONDS);
+            break;
         case 'fruit':
+            // Scored, not sounded, on the host.
+            showScorePopup(event.x, event.y, event.score, FRUIT_POPUP_SECONDS);
+            break;
         case 'extraLife':  break;
     }
+}
+
+/**
+ * The floating number over an eaten enemy or fruit. It cannot ride in the
+ * snapshot: its expiry is a time on the host's clock, which means nothing here.
+ * The event says where and how much, and the client times it out itself.
+ */
+function showScorePopup(x: number, y: number, score: number, seconds: number): void {
+    gameState.scorePopups.push({ x, y, score, endTime: Time.timeSinceStart + seconds });
 }
 
 function makeRenderOnlyPlayer(

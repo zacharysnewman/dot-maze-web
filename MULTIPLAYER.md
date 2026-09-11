@@ -114,8 +114,9 @@ and GitHub Pages users hold stale tabs for a long time. Mismatches must be
 refused with a "reload the page" message rather than half-working.
 
 Bump `PROTOCOL_VERSION` whenever `LevelData`, the snapshot format or the input
-format changes. It is at **2**: the handshake gained `clientId`, which is what
-a held seat is keyed by.
+format changes. It is at **3**: the handshake gained `clientId`, which is what
+a held seat is keyed by, and the scored events gained a position and an amount,
+which is what a client draws a floating score from.
 
 ### Client → host: input
 
@@ -190,7 +191,7 @@ data:
 ```ts
 type NetEvent =
     | { e: 'dot' } | { e: 'power' } | { e: 'fruit' }
-    | { e: 'eatEnemy'; chain: number }
+    | { e: 'eatEnemy'; chain: number; score: number; x: number; y: number }
     | { e: 'death'; playerId: number }
     | { e: 'levelClear' } | { e: 'extraLife' };
 ```
@@ -198,6 +199,12 @@ type NetEvent =
 The ambient siren is derived, not sent: `updateAmbientSiren` already picks the
 siren from enemy modes and `frightenedRemaining`, both of which are in every
 snapshot, so clients can run it unchanged.
+
+The scored events carry a position and an amount because the floating number
+the host draws over an eaten enemy or fruit is not in the snapshot, and cannot
+be: `scorePopups` expires on a time from the host's clock, which means nothing
+on another machine. The event says where and how much; each client times its
+own out.
 
 ### Disconnects
 
@@ -562,7 +569,7 @@ thing standing between this and a sofa full of people joining a friend online.
   group: `playerIds: number[]` and an input per id. `nextPlayerId()` becomes
   `allocateIds(count)`, and the host reserves `1..L` for its own locals instead
   of silently taking id 1.
-- **Protocol 3.** `hello` says how many players the machine brings; `welcome`
+- **Protocol 4.** `hello` says how many players the machine brings; `welcome`
   answers with a list of ids, possibly shorter than asked; `input` says which
   player it is for. `Snapshot.ack` already keys by player id, so it does not
   change.
@@ -753,7 +760,8 @@ real use.
 | Prediction stalls on dots, as the host does | ✅ Complete — the cause of the rubber banding |
 | Divergence snaps instead of nudging | ✅ Complete — nudging bounced, and walked through walls |
 | Interpolation follows corners instead of cutting them | ✅ Complete |
-| Seats become groups (protocol 3, per-player prediction) | ⬜ Planned — Phase 6 |
+| Floating scores from eaten enemies and fruit reach clients | ✅ Complete |
+| Seats become groups (protocol 4, per-player prediction) | ⬜ Planned — Phase 6 |
 | Several local players on one machine, online | ⬜ Planned — Phase 7 |
 | Eight players, cycling colours and props | ⬜ Planned — Phase 8 |
 | Automatic reconnection (client retries by itself) | ✅ Complete — 28 s of retries against a 30 s seat hold |

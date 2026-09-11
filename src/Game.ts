@@ -40,7 +40,7 @@ import { InputSampler } from './net/InputSampler';
 import { ClientGame } from './net/ClientGame';
 import type { ConnectionState } from './net/NetClient';
 import type { HostPhase, Snapshot } from './net/Protocol';
-import { SNAPSHOT_HZ, tileIndex } from './net/Protocol';
+import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, SNAPSHOT_HZ, tileIndex } from './net/Protocol';
 
 
 // Enemy eye-return speed (constant regardless of level)
@@ -79,9 +79,9 @@ function checkFruitCollision(): void {
         if (player.active && Math.abs(player.actor.x - fx) < unit && Math.abs(player.actor.y - fy) < unit) {
             const score = getFruitPoints(gameState.level);
             Stats.addToScore(score);
-            gameState.scorePopups.push({ x: fx, y: fy, score, endTime: Time.timeSinceStart + 2.0 });
+            gameState.scorePopups.push({ x: fx, y: fy, score, endTime: Time.timeSinceStart + FRUIT_POPUP_SECONDS });
             gameState.fruitActive = null;
-            NetEvents.record({ e: 'fruit' });
+            NetEvents.record({ e: 'fruit', score, x: fx, y: fy });
             break;
         }
     }
@@ -325,7 +325,7 @@ function eatEnemy(enemy: IGameObject, player: PlayerState): void {
         x: enemy.x,
         y: enemy.y,
         score,
-        endTime: Time.timeSinceStart + 1.0,
+        endTime: Time.timeSinceStart + ENEMY_POPUP_SECONDS,
     });
 
     // Freeze this player briefly while score is shown
@@ -333,7 +333,13 @@ function eatEnemy(enemy: IGameObject, player: PlayerState): void {
     Time.addTimer(0.5, () => { player.frozen = false; });
 
     Sound.enemyEaten();
-    NetEvents.record({ e: 'eatEnemy', chain: gameState.enemyEatenChain });
+    NetEvents.record({
+        e: 'eatEnemy',
+        chain: gameState.enemyEatenChain,
+        score,
+        x: enemy.x,
+        y: enemy.y,
+    });
 
     // Enemy becomes eyes and speeds home
     enemy.enemyMode = 'eyes';
