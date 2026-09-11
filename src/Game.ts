@@ -30,7 +30,11 @@ import { NetHost } from './net/NetHost';
 import { NetClient } from './net/NetClient';
 import type { JoinFailure } from './net/NetClient';
 import type { CodeEntry, LobbyView } from './net/LobbyScreen';
-import { drawClientGameOver, drawLobbyScreen, drawWaitingBanner, hitsLeaveButton, hitsStartButton, showCodeEntry } from './net/LobbyScreen';
+import { drawClientGameOver, drawLobbyScreen, drawWaitingBanner, hitsLeaveButton, hitsMapButton, hitsStartButton, showCodeEntry } from './net/LobbyScreen';
+import { openLibraryModal } from './editor/LibraryModal';
+import { validateLevel } from './editor/Validate';
+import { getTileSet } from './editor/TileSet';
+import { deepCopyLevel } from './editor/EditorState';
 import { NetEvents } from './net/NetEvents';
 import { InputSampler } from './net/InputSampler';
 import { ClientGame } from './net/ClientGame';
@@ -1120,7 +1124,7 @@ export function startTestGame(level: LevelData, onReturn: () => void): void {
     update();
 }
 
-function start(slots: ConfirmedSlot[]): void {
+function start(slots: ConfirmedSlot[], level?: LevelData): void {
     // Inject debug phantom players. They are seated with the same
     // RemotePlayerInput an online player gets, so the multiplayer input path is
     // exercised locally; idle unless the debug net loopback is driving them.
@@ -1156,7 +1160,7 @@ function start(slots: ConfirmedSlot[]): void {
 
     gameStarted = true;
     Time.setup();
-    initializeLevel(slots);
+    initializeLevel(slots, level);
     gameState.frozen = true;
     gameState.showReady = true;
     Sound.introChimes();
@@ -1200,6 +1204,8 @@ let returningToLobby = false;
 // Host side, while a networked game runs.
 let hostPhase: HostPhase = 'lobby';
 let snapshotTick = 0;
+/** The map the host will start, and sends to everyone who joins. */
+let hostLevel: LevelData = Levels.level1Data;
 /** Players whose seat is being held open — they sit out until they are back. */
 const disconnectedPlayers = new Set<number>();
 
@@ -1359,8 +1365,9 @@ function lobbyStatusFor(playerCount: number): string {
 
 function startHosting(): void {
     gameStarted = true; // keeps startScreenLoop and the menu handlers out of the way
+    hostLevel = Levels.level1Data;
     netHost = new NetHost({
-        level: Levels.level1Data,
+        level: hostLevel,
         name: localPlayerName(),
         onRosterChange: (roster) => {
             if (lobbyView === null) return;
@@ -1385,6 +1392,7 @@ function startHosting(): void {
         code: netHost.code,
         roster: netHost.roster(),
         selfPlayerId: 1,
+        mapName: hostLevel.name,
         status: lobbyStatusFor(1),
         error: null,
     };
@@ -1418,14 +1426,16 @@ function startJoining(): void {
                         code,
                         roster: netClient?.roster ?? [],
                         selfPlayerId: playerId,
+                        mapName: level.name,
                         status: 'WAITING FOR THE HOST...',
                         error: null,
                     };
                     enterLobby();
                 },
-                onRosterChange: (roster) => {
+                onRosterChange: (roster, mapName) => {
                     if (lobbyView === null) return;
                     lobbyView.roster = roster;
+                    if (mapName !== null) lobbyView.mapName = mapName;
                 },
                 onFailure: (failure) => {
                     netClient = null;
@@ -1489,6 +1499,48 @@ function onLobbyTouch(e: TouchEvent): void {
 function handleLobbyPoint(x: number, y: number): void {
     if (hitsLeaveButton(x, y)) leaveLobby();
     else if (hitsStartButton(x, y)) hostStartGame();
+    else if (hitsMapButton(x, y)) openMapPicker();
+}
+
+/**
+ * Pick the map everyone is about to play, from the same library modal the
+ * editor uses — the editor is the most active part of the project, and playing
+ * a friend's maze together is the point of all this.
+ *
+ * A level that cannot be played is refused here, before anyone joins a game
+ * built on it, rather than failing once four people are already in it.
+ */
+function openMapPicker(): void {
+    if (netHost === null || !lobbyRunning) return;
+
+    const use = (level: LevelData, close: () => void): void => {
+        hostLevel = level;
+        netHost?.setLevel(level);
+        if (lobbyView !== null) lobbyView.mapName = level.name;
+        close();
+    };
+
+    openLibraryModal({
+        title: '🌐 Pick a map to host',
+        emptyMessage: 'No saved maps yet.<br>Build one in the editor and save it to your library.',
+        lead: {
+            label: '▦ The classic maze',
+            onClick: (controls) => use(Levels.level1Data, controls.close),
+        },
+        actions: (entry) => [{
+            label: '🌐 Host this',
+            tone: 'load',
+            onClick: (chosen, controls) => {
+                const result = validateLevel(chosen.level, getTileSet(chosen.tileSetId));
+                if (!result.valid) {
+                    alert(`"${chosen.level.name || 'Untitled'}" cannot be played yet:\n`
+                        + result.errors.map(e => `• ${e}`).join('\n'));
+                    return;
+                }
+                use(deepCopyLevel(chosen.level), controls.close);
+            },
+        }],
+    });
 }
 
 /** Client coordinates to canvas coordinates — the canvas is CSS-scaled. */
@@ -1542,7 +1594,7 @@ function hostStartGame(): void {
     snapshotTick = 0;
     setHostPhase('playing');
     netHost.startGame();
-    start(slots);
+    start(slots, hostLevel);
 }
 
 /** Stop drawing the lobby and drop its handlers, without closing the room. */
@@ -1687,6 +1739,7 @@ function returnClientToLobby(): void {
         code: netClient.code,
         roster: netClient.roster,
         selfPlayerId: netClient.playerId,
+        mapName: netClient.level?.name ?? '',
         status: 'WAITING FOR THE HOST TO START A NEW GAME',
         error: null,
     };

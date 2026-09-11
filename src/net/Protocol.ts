@@ -178,10 +178,15 @@ export interface RejectMsg {
     reason: RejectReason;
 }
 
-/** Lobby roster changed — someone joined, left or reconnected. */
+/**
+ * Lobby state changed — someone joined, left or reconnected, or the host picked
+ * a different map. `mapName` is additive: a client that does not read it simply
+ * shows the map it was welcomed with.
+ */
 export interface RosterMsg {
     t: 'roster';
     roster: PeerInfo[];
+    mapName?: string;
 }
 
 /** Host pressed START. Carries the level in case the host picked a new one. */

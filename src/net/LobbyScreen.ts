@@ -8,13 +8,16 @@ export interface LobbyView {
     code: string;
     roster: PeerInfo[];
     selfPlayerId: number;
+    /** The map everyone is about to play. Joiners learn it from the welcome. */
+    mapName: string;
     status: string;
     error: string | null;
 }
 
 // Buttons, in tile units. Taps are hit-tested against these.
 const LEAVE_BUTTON = { x: 9, y: 30, w: 10, h: 2.6 };
-const START_BUTTON = { x: 8, y: 25.2, w: 12, h: 2.8 };
+const START_BUTTON = { x: 8, y: 26.4, w: 12, h: 2.6 };
+const MAP_BUTTON   = { x: 8, y: 22.5, w: 12, h: 1.9 };
 
 interface Rect { x: number; y: number; w: number; h: number }
 
@@ -30,6 +33,10 @@ export function hitsLeaveButton(canvasX: number, canvasY: number): boolean {
 
 export function hitsStartButton(canvasX: number, canvasY: number): boolean {
     return hits(START_BUTTON, canvasX, canvasY);
+}
+
+export function hitsMapButton(canvasX: number, canvasY: number): boolean {
+    return hits(MAP_BUTTON, canvasX, canvasY);
 }
 
 export function drawLobbyScreen(view: LobbyView): void {
@@ -65,23 +72,49 @@ export function drawLobbyScreen(view: LobbyView): void {
 
     ctx.fillStyle = 'cyan';
     ctx.font = `bold ${Math.round(unit * 0.8)}px monospace`;
-    ctx.fillText('PLAYERS', cx, unit * 13);
+    ctx.fillText('PLAYERS', cx, unit * 12.4);
 
     for (let id = 1; id <= MAX_PLAYERS; id++) {
         const seated = view.roster.find(p => p.playerId === id) ?? null;
-        const y = unit * (15 + (id - 1) * 2);
+        const y = unit * (14.2 + (id - 1) * 1.8);
         drawRosterRow(ctx, cx, y, id, seated, id === view.selfPlayerId);
+    }
+
+    // The map is part of the invitation: a joiner should know what they are
+    // being asked to play before the host starts it.
+    ctx.fillStyle = '#888';
+    ctx.font = `${Math.round(unit * 0.55)}px monospace`;
+    ctx.fillText('MAP', cx, unit * 21);
+    ctx.fillStyle = 'white';
+    ctx.font = `bold ${Math.round(unit * 0.75)}px monospace`;
+    ctx.fillText(truncate(view.mapName, 26), cx, unit * 22);
+
+    if (view.role === 'host') {
+        drawButton(ctx, MAP_BUTTON, 'CHANGE MAP', '#aaa');
     }
 
     ctx.fillStyle = view.error !== null ? '#ff5555' : '#aaa';
     ctx.font = `${Math.round(unit * 0.65)}px monospace`;
-    ctx.fillText(view.error ?? view.status, cx, unit * 24);
+    ctx.fillText(view.error ?? view.status, cx, unit * 25.3);
 
     if (view.role === 'host') {
-        drawButton(ctx, START_BUTTON, 'START', 'yellow', 'TAP - ENTER - A');
+        drawButton(ctx, START_BUTTON, 'START', 'yellow');
     }
 
-    drawButton(ctx, LEAVE_BUTTON, 'LEAVE', 'white', 'TAP - ESC - B');
+    drawButton(ctx, LEAVE_BUTTON, 'LEAVE', 'white');
+
+    ctx.fillStyle = '#555';
+    ctx.font = `${Math.round(unit * 0.5)}px monospace`;
+    ctx.fillText(
+        view.role === 'host' ? 'START: TAP - ENTER - A      LEAVE: TAP - ESC - B' : 'LEAVE: TAP - ESC - B',
+        cx, unit * 33.4,
+    );
+}
+
+/** Long map names are the author's business; the lobby only has one line. */
+function truncate(text: string, max: number): string {
+    const name = text.trim().length === 0 ? '(UNTITLED)' : text.trim().toUpperCase();
+    return name.length <= max ? name : `${name.slice(0, max - 1)}\u2026`;
 }
 
 function drawRosterRow(
@@ -120,7 +153,6 @@ function drawButton(
     rect: Rect,
     label: string,
     color: string,
-    hint: string,
 ): void {
     const x = rect.x * unit;
     const y = rect.y * unit;
@@ -136,12 +168,8 @@ function drawButton(
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = color;
-    ctx.font = `bold ${Math.round(unit * 0.8)}px monospace`;
+    ctx.font = `bold ${Math.round(unit * (h > 2 ? 0.8 : 0.65))}px monospace`;
     ctx.fillText(label, x + w / 2, y + h / 2);
-
-    ctx.fillStyle = '#555';
-    ctx.font = `${Math.round(unit * 0.5)}px monospace`;
-    ctx.fillText(hint, x + w / 2, y + h + unit * 0.9);
 }
 
 /**
@@ -196,7 +224,11 @@ export function drawClientGameOver(score: number, status: string): void {
     ctx.font = `${Math.round(unit * 0.65)}px monospace`;
     ctx.fillText(status, cx, unit * 21);
 
-    drawButton(ctx, LEAVE_BUTTON, 'LEAVE', 'white', 'TAP - ESC - B');
+    drawButton(ctx, LEAVE_BUTTON, 'LEAVE', 'white');
+
+    ctx.fillStyle = '#555';
+    ctx.font = `${Math.round(unit * 0.5)}px monospace`;
+    ctx.fillText('TAP - ESC - B', cx, unit * 33.4);
 }
 
 /** `123456` reads as one number; `1 2 3 4 5 6` reads as digits to copy. */

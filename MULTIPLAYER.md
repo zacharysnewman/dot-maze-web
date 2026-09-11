@@ -298,6 +298,7 @@ resolution-dependent drift.
 | `src/Game.ts` | Menu entries for host/join; net hooks in `start`, `update`, `initializeLevel` |
 | `src/static/Sound.ts` | Nothing structural — clients call it from `NetEvent`s |
 | `src/static/Speeds.ts` | The speed table, moved out of `Game.ts` so a predicting client can use it |
+| `src/editor/LibraryModal.ts` | The saved-maps list, extracted from the editor so the lobby can pick from it |
 
 The shared-helper extraction comes first. The buffer-retry block was already
 copied across `KeyboardPlayerInput`, `GamepadPlayerInput` and
@@ -484,14 +485,37 @@ it when the host recovers.
 itself — the player rejoins by entering the code again, and the seat is waiting
 for them.
 
-### Phase 5 — Custom levels
+### Phase 5 — Custom levels ✅
 
 The editor is the most actively developed part of the project, so "play my maze
-together" is the payoff. The host already sends `LevelData` in the `welcome`
-message, so this phase is the level picker on the host's lobby screen — the
-existing library modal, reused — plus confirming `migrateLevel` runs on the
-receiving side and that validation failures are caught before anyone joins
-rather than after.
+together" is the payoff — and it is now two taps from the lobby.
+
+- The library modal moved to `src/editor/LibraryModal.ts` and is genuinely
+  shared. Same list, same cards, different buttons: the editor loads,
+  play-tests and deletes; a host picks what everyone is about to play. The
+  editor's own behaviour is unchanged.
+- **CHANGE MAP** sits on the host's lobby screen, so the map can be swapped
+  between games as well as before the first one — the room outlives a game, and
+  so does the choice. The picker leads with the classic maze and lists every
+  saved map with its dot and power counts.
+- **A level that cannot be played is refused at the picker**, with the
+  validator's reasons, rather than failing once four people have joined a game
+  built on it. Budgets are checked against the tile set the map was authored
+  under.
+- The lobby shows the map name to everyone, and a host changing it tells the
+  clients waiting in the lobby. That rides on the existing `roster` message as
+  an additive field, so no protocol bump: a client that ignores it simply shows
+  the map it was welcomed with.
+- Clients migrate an incoming level (`migrateLevel`) and do not re-validate it.
+  The host already did, and in co-op the host is trusted — version skew, the
+  one case where that would not hold, is refused at the handshake.
+
+**Verified:** the picker lists saved maps beside the stock one; a map walled in
+end to end is refused with reasons and the picker stays open; picking a good one
+renames the map on the host's lobby and on a waiting client's; and starting
+plays it — a map with its top rows stripped of dots renders that way on both
+machines. The editor's own library modal was re-checked: save, list, load, and
+the three buttons it has always had.
 
 ---
 
@@ -550,6 +574,10 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 
 ## Implementation Status
 
+All five phases are done. What is left is the list below the line: mid-level
+joining, automatic reconnection, and the relay fallback if NAT traversal proves
+too lossy in real use.
+
 | Feature | Status |
 |---|---|
 | Shared input-apply helper extracted | ✅ Complete — Keyboard, Gamepad and Touch |
@@ -566,7 +594,7 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 | Waiting banner when the host goes quiet | ✅ Complete |
 | Automatic reconnection (client retries by itself) | ⬜ Planned — the seat is held; rejoining is manual |
 | Room survives game over, host restarts from the lobby | ✅ Complete |
-| Host picks a library level before hosting | ⬜ Planned |
+| Host picks a library level before hosting | ✅ Complete — and between games, not only before the first |
 | Mid-level joining | ⬜ Planned — after Phase 5; next-level joining ships first |
 | WebSocket relay fallback | ⬜ Deferred — only if NAT failures prove common |
 | Host migration | ❌ Out of scope — blocked by non-serialisable timers |

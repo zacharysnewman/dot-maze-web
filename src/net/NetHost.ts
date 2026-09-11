@@ -105,6 +105,9 @@ export class NetHost {
 
     setLevel(level: LevelData): void {
         this.level = level;
+        // Everyone waiting in the lobby is looking at a map name; tell them it
+        // changed rather than surprising them when the game starts.
+        this.publishRoster();
     }
 
     setInProgress(inProgress: boolean): void {
@@ -300,7 +303,7 @@ export class NetHost {
     private publishRoster(): void {
         const roster = this.roster();
         this.onRosterChange(roster);
-        if (this.seats.size > 0) this.sendTo({ t: 'roster', roster });
+        if (this.seats.size > 0) this.sendTo({ t: 'roster', roster, mapName: this.level.name });
     }
 
     private sendTo(msg: HostMessage, peerId?: string): void {

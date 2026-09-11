@@ -17,7 +17,7 @@ export interface NetClientOptions {
      * to a held seat gets.
      */
     onWelcome: (playerId: number, level: LevelData, state: Snapshot | null) => void;
-    onRosterChange: (roster: PeerInfo[]) => void;
+    onRosterChange: (roster: PeerInfo[], mapName: string | null) => void;
     /** The host pressed START. The level comes with it — it may have changed. */
     onStart: (level: LevelData) => void;
     onSnapshot: (snapshot: Snapshot) => void;
@@ -123,7 +123,7 @@ export class NetClient {
                 this.level = migrateLevel(msg.level);
                 this.roster = msg.roster;
                 this.options.onWelcome(this.playerId, this.level, msg.state);
-                this.options.onRosterChange(this.roster);
+                this.options.onRosterChange(this.roster, this.level.name);
                 break;
             }
             case 'reject':
@@ -131,7 +131,7 @@ export class NetClient {
                 break;
             case 'roster':
                 this.roster = msg.roster;
-                this.options.onRosterChange(this.roster);
+                this.options.onRosterChange(this.roster, msg.mapName ?? null);
                 break;
             case 'start':
                 this.level = migrateLevel(msg.level);
