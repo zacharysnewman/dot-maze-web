@@ -82,13 +82,19 @@ A joiner announces itself; the host replies with the level and an assigned slot.
 
 ```ts
 // client → host
-{ t: 'hello', protocol: PROTOCOL_VERSION }
+{ t: 'hello', protocol: PROTOCOL_VERSION, name: 'ZSN' }
 
 // host → client
-{ t: 'welcome', playerId: 2, level: LevelData, state: FullState }
+{ t: 'welcome', protocol, playerId: 2, level: LevelData, roster: PeerInfo[],
+  state: Snapshot | null }   // state is null while the room is still in the lobby
 // or
 { t: 'reject', reason: 'protocol' | 'full' | 'in-progress' }
 ```
+
+Two more host → client messages keep the lobby live: `{ t: 'roster', roster }`
+when someone joins, leaves or reconnects, and `{ t: 'start', level }` when the
+host presses START — it carries the level because the host may have picked a new
+one since the welcome. Clients send `{ t: 'leave' }` on the way out.
 
 **The protocol version is not optional.** `LevelData` changed shape recently
 (`tunnelRow` + `tunnelSlowColMax`/`Min` collapsed into `tunnelSlowTiles`) and
@@ -119,15 +125,20 @@ only "the direction I want" would lose it.
 
 ### Host → client: snapshot
 
-20 Hz. Sent as JSON to start with — at ~400 bytes × 20 Hz × 3 clients that is
-under 10 KB/s and will never need optimising. A binary encoding quantising
-positions to ¹⁄₁₆ tile would reach ~90 bytes if it ever matters.
+20 Hz, JSON. A full four-player snapshot measures **887 bytes**, so a host with
+three clients uploads ~52 KB/s (~420 kbit/s) and each client pulls ~17 KB/s.
+Fine on broadband, tight on a weak uplink — the first lever if it bites is
+eliding default-valued fields, then a binary encoding quantising positions to
+¹⁄₁₆ tile, which would reach ~90 bytes.
+
+Positions are rounded to one decimal on encode. They are pixel-space
+(`tile × 20`), so that is ¹⁄₂₀₀ of a tile — far below anything visible.
 
 ```ts
 interface Snapshot {
     t: 'snap';
     tick: number;
-    ack: number[];                    // last input seq seen per player
+    ack: Record<number, number>;      // last input seq seen, per player id
     players: Array<{
         id: number; x: number; y: number; dir: Direction;
         active: boolean; dying: boolean; deathProgress: number; frozen: boolean;
@@ -261,14 +272,14 @@ resolution-dependent drift.
 | File | Change |
 |---|---|
 | `src/input/PlayerInput.ts` | Extract the shared apply-direction + buffer-retry helper |
-| `src/input/KeyboardPlayerInput.ts`, `GamepadPlayerInput.ts` | Use the helper |
+| `src/input/KeyboardPlayerInput.ts`, `GamepadPlayerInput.ts`, `TouchPlayerInput.ts` | Use the helper |
 | `src/Game.ts` | Menu entries for host/join; net hooks in `start`, `update`, `initializeLevel` |
 | `src/static/Sound.ts` | Nothing structural — clients call it from `NetEvent`s |
 
-The shared-helper extraction comes first. That apply-and-retry block is
-duplicated between `KeyboardPlayerInput` and `GamepadPlayerInput` already;
-`RemotePlayerInput` would make three copies. Pulling it out once pays for itself
-immediately.
+The shared-helper extraction comes first. The buffer-retry block was already
+copied across `KeyboardPlayerInput`, `GamepadPlayerInput` and
+`TouchPlayerInput`; `RemotePlayerInput` would have made a fourth. Pulling it out
+once pays for itself immediately.
 
 ### Data flow
 
@@ -309,14 +320,28 @@ bottom.
 
 ## Implementation phases
 
-### Phase 1 — Plumbing
+### Phase 1 — Plumbing ✅
 
-- Extract the shared input-apply helper; rewire Keyboard and Gamepad to it.
-- `RemotePlayerInput` against that helper.
-- `Protocol.ts`: version constant, message types, snapshot encode/decode.
-- No UI, no transport. Verify by seating a `RemotePlayerInput` locally and
-  driving it from the debug panel — the existing "Extra players" slider already
-  injects phantom players and is the natural harness.
+- `applyPlayerInput` / `bufferDir` / `isDirOpen` extracted into
+  `src/input/PlayerInput.ts`. Keyboard, Gamepad **and Touch** now call them —
+  Touch was a third copy of the buffer-retry block, so the extraction paid for
+  itself before `RemotePlayerInput` existed.
+- `src/net/Protocol.ts`: `PROTOCOL_VERSION`, every message type, the held-direction
+  bitmask, tile-index packing, and a codec that returns `null` on anything it
+  cannot parse rather than throwing inside the render loop.
+- `src/net/RemotePlayerInput.ts`: a `PlayerInput` fed by `receive(InputMsg)`.
+  It drops stale and duplicate sequence numbers, and re-buffers a direction only
+  when the sender newly buffered it — otherwise a held-into-a-wall turn resent
+  every message would never expire.
+- Phantom debug players are now seated with `RemotePlayerInput` instead of a
+  dead gamepad, and a **Mirror P1 to extras (net)** checkbox runs player 1's
+  input through `encodeMessage` → `decodeMessage` → `receive` each frame. That
+  is the whole multiplayer input path exercised with no transport present.
+
+**Verified:** held direction applies, held-into-a-wall is ignored, a buffered
+turn waits at a wall and fires when the corridor opens, the buffer expires after
+8 frames, stale sequence numbers are dropped, malformed payloads decode to
+`null`, and a snapshot survives the round trip.
 
 ### Phase 2 — Transport and lobby
 
@@ -421,9 +446,9 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 
 | Feature | Status |
 |---|---|
-| Shared input-apply helper extracted | ⬜ Planned |
-| `RemotePlayerInput` | ⬜ Planned |
-| Protocol types, version, snapshot codec | ⬜ Planned |
+| Shared input-apply helper extracted | ✅ Complete — Keyboard, Gamepad and Touch |
+| `RemotePlayerInput` | ✅ Complete — driven by the debug loopback |
+| Protocol types, version, snapshot codec | ✅ Complete |
 | Trystero transport, host + client | ⬜ Planned |
 | Lobby screens and code entry | ⬜ Planned |
 | Snapshot broadcast and apply | ⬜ Planned |

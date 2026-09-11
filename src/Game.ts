@@ -19,6 +19,9 @@ import { KeyboardPlayerInput } from './input/KeyboardPlayerInput';
 import { TouchPlayerInput    } from './input/TouchPlayerInput';
 import { GamepadPlayerInput  } from './input/GamepadPlayerInput';
 import { CompositePlayerInput } from './input/CompositePlayerInput';
+import { RemotePlayerInput } from './net/RemotePlayerInput';
+import type { InputMsg } from './net/Protocol';
+import { encodeHeld, encodeMessage, decodeMessage } from './net/Protocol';
 
 
 // Enemy eye-return speed (constant regardless of level)
@@ -849,6 +852,33 @@ function updateAmbientSiren(): void {
 
 // ── Main Update Loop ──────────────────────────────────────────────────────────
 
+/**
+ * Debug harness for the multiplayer input path: take player 1's input, encode
+ * it as an InputMsg, run it back through the codec, and feed the result to
+ * every RemotePlayerInput in the game. Phantom players then mirror player 1.
+ *
+ * There is no transport yet, so this is what proves the
+ * encode -> decode -> RemotePlayerInput -> actor path works end to end.
+ */
+function feedDebugNetLoopback(): void {
+    const source = gameState.players.find(p => !(p.input instanceof RemotePlayerInput));
+    if (source === undefined) return;
+
+    const msg: InputMsg = {
+        t: 'input',
+        held: encodeHeld(source.input),
+        buffered: source.input.bufferedDir,
+        seq: ++debugNetSeq,
+    };
+
+    const decoded = decodeMessage(encodeMessage(msg));
+    if (decoded === null || decoded.t !== 'input') return;
+
+    for (const p of gameState.players) {
+        if (p.input instanceof RemotePlayerInput) p.input.receive(decoded);
+    }
+}
+
 function update(): void {
     try { Time.update(); } catch (e) { console.error('Time.update error:', e); }
 
@@ -886,6 +916,7 @@ function update(): void {
     }
 
     if (!gameState.frozen && !gameState.gameOver) {
+        if (debugNetLoopback) feedDebugNetLoopback();
         for (const p of gameState.players) {
             if (p.active && !p.dying) p.input.update(p.actor);
         }
@@ -990,10 +1021,12 @@ export function startTestGame(level: LevelData, onReturn: () => void): void {
 }
 
 function start(slots: ConfirmedSlot[]): void {
-    // Inject debug phantom players (noop GamepadPlayerInput with nonexistent index)
+    // Inject debug phantom players. They are seated with the same
+    // RemotePlayerInput an online player gets, so the multiplayer input path is
+    // exercised locally; idle unless the debug net loopback is driving them.
     const maxId = slots.reduce((m, s) => Math.max(m, s.id), 0);
     for (let i = 0; i < debugExtraPlayers && slots.length < 4; i++) {
-        slots = [...slots, { id: maxId + i + 1, input: new GamepadPlayerInput(99) as PlayerInput }];
+        slots = [...slots, { id: maxId + i + 1, input: new RemotePlayerInput() as PlayerInput }];
     }
 
     // Full game state reset for a fresh play
@@ -1044,6 +1077,8 @@ let returningToEditor = false;
 let editorReturnCallback: (() => void) | null = null;
 let testMode = false;
 let debugExtraPlayers = 0; // injected phantom players for testing multiplayer
+let debugNetLoopback = false; // mirror P1 through the wire codec into phantom players
+let debugNetSeq = 0;
 let audioUnlocked = false;   // true after first user gesture (AudioContext created)
 let menuMusicPlaying = false; // true while menu music is actively playing
 let controllerActive = false; // true once any gamepad interaction is detected; never resets
@@ -1460,6 +1495,7 @@ window.onload = function () {
                     <input type="range" id="dbg-extra-players" min="0" max="3" value="0"
                         style="width:100%;accent-color:yellow;cursor:pointer">
                 </label>
+                <label><input type="checkbox" id="dbg-net-loopback"> Mirror P1 to extras (net)</label>
                 <button id="dbg-pause">⏸ Pause</button>
                 <button id="dbg-player-select">◀ Player Select</button>
                 <button id="dbg-initials">✏ Initials Screen</button>
@@ -1500,6 +1536,9 @@ window.onload = function () {
         extraPlayersSlider.oninput = () => {
             debugExtraPlayers = parseInt(extraPlayersSlider.value);
             extraPlayersLabel.textContent = `Extra players: ${debugExtraPlayers}`;
+        };
+        (document.getElementById('dbg-net-loopback') as HTMLInputElement).onchange = (e) => {
+            debugNetLoopback = (e.target as HTMLInputElement).checked;
         };
 
         const pauseBtn = document.getElementById('dbg-pause') as HTMLButtonElement;
