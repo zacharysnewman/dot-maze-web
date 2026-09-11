@@ -50,14 +50,18 @@ scaling problems Trystero hits with many peers in one room.
 corporate firewall (roughly 5–10% of connections) cannot connect at all, and
 there is no free fix — TURN relays real bandwidth.
 
-If that bites, Trystero also speaks to a self-hosted WebSocket relay. Swapping
-strategies means one new implementation of the `Transport` interface and nothing
-else; a relay routes through a server and so sidesteps
-NAT entirely. A Cloudflare Worker + Durable Object is the natural home (bills
-inbound messages only, at 20:1, outbound free — about 11 hours of play per day
-on the free tier). **Nothing below changes if the transport is swapped**: the
-host-authoritative design and the wire format are transport-agnostic by
-construction.
+`?relay=<url>` on the game's URL points **signalling** at a relay of your own
+instead of the public list — a private group's own relay, or a local one for
+testing. That fixes flaky or blocked relays, not NAT: signalling is only how
+peers find each other, and the connection is still direct.
+
+For NAT itself, Trystero also speaks to a self-hosted WebSocket relay, which
+routes the traffic through a server and so sidesteps NAT entirely. That is one
+new implementation of the `Transport` interface and nothing else. A Cloudflare
+Worker + Durable Object is the natural home (bills inbound messages only, at
+20:1, outbound free — about 11 hours of play per day on the free tier).
+**Nothing below changes if the transport is swapped**: the host-authoritative
+design and the wire format are transport-agnostic by construction.
 
 ---
 
@@ -171,6 +175,10 @@ type HostPhase = 'playing' | 'gameover' | 'initials' | 'lobby';
 field, so wrap behaviour needs no syncing — clients infer it from tiles they
 already hold.
 
+`eaten` is a delta, which cannot express "all the dots are back". It does not
+have to: the host rebuilds its dot grid exactly when the level number changes,
+so a client rebuilds on a change to `level` and applies deltas within one.
+
 ### Events
 
 Sound is triggered inline inside game logic — `Sound.dot()` fires from
@@ -272,6 +280,9 @@ resolution-dependent drift.
 | `src/net/NetHost.ts` | Room hosting, peer seating, snapshot broadcast, input intake |
 | `src/net/NetClient.ts` | Join, handshake, snapshot buffer, interpolation, apply-to-state |
 | `src/net/RemotePlayerInput.ts` | `PlayerInput` fed from the wire |
+| `src/net/InputSampler.ts` | Reads the local player on a machine that runs no simulation |
+| `src/net/NetEvents.ts` | What the host did that a client cannot derive: sounds, and eaten tiles |
+| `src/net/ClientGame.ts` | Render-only world: build it, write snapshots onto it, draw |
 | `src/net/LobbyScreen.ts` | Host and join screens, code entry, roster |
 
 ### Files to change
@@ -383,19 +394,43 @@ code with no lobby behind it times out. Signalling ran against a local relay,
 so the public relay list and real-world NAT traversal are the parts still
 unproven.
 
-### Phase 3 — Playable
+### Phase 3 — Playable ✅
 
-- Host broadcasts snapshots at 20 Hz; client applies them directly, no
-  interpolation.
-- Client sends inputs; host feeds `RemotePlayerInput`.
-- Client builds render-only actors and draws HUD from synced values.
-- Events drive client audio.
-- Game over returns the host to its lobby; clients show GAME OVER with the host
-  status line and a LEAVE button.
+- The host broadcasts a snapshot every third frame and seats remote players
+  through `start()` exactly like local ones. Clients send input on change with a
+  10 Hz heartbeat behind it.
+- The render-only client turned out to be as cheap as promised: no-op move
+  functions, no-op tile callbacks, and the snapshot written straight onto
+  `x`/`y`/`moveDir`. The whole draw path — maze, HUD, READY!, game over, the
+  fruit counter, the death animation — is the host's, unchanged, reading a
+  `gameState` the network filled in.
+- `src/net/NetEvents.ts` collects what a client cannot derive: sounds fired
+  inside host-only logic, and the tiles that lost their dots. Recording is off
+  unless a host is running, so local play never fills a buffer nothing drains.
+- `src/net/InputSampler.ts` reads the local player on a machine with no
+  simulation. It runs `update()` against an actor standing in an imaginary open
+  crossroads, which both polls the gamepad — whose held flags only refresh
+  inside `update()` — and consumes a buffered turn so it is reported once, on
+  the frame it was asked for.
+- Game over returns the host to its lobby with the code live and the roster
+  intact, and a second game starts with everyone still seated. Clients follow
+  the host's `hostPhase` through it.
 
-**Done when** two people finish a level together. It will feel floaty — the
-local player lags a full round trip — and remote motion will be visibly steppy
-at 20 Hz. Both are Phase 4's problem.
+**Two things fell out of building it.** The client builds its player list from
+the first snapshot rather than the lobby roster — the snapshot is the authority
+on who is playing, and a roster read at START can already be stale. And the
+dot grid needs no epoch field: the host rebuilds it exactly when the level
+number changes, which every snapshot already carries, so a client rebuilds on
+that and applies `eaten` within a level.
+
+**Verified** in two browsers on one lobby code: both draw the same maze, score
+and HUD; a client's arrow keys eat dots on the host; game over shows GAME OVER
+on both, then the client waits on "WAITING FOR THE HOST..." with a LEAVE button
+while the host types initials, then both land back in the lobby and a second
+game starts. Local play was re-checked offline and is untouched.
+
+It feels floaty, as predicted — the local player lags a full round trip — and
+remote motion is visibly steppy at 20 Hz. Both are Phase 4's problem.
 
 ### Phase 4 — Feel
 
@@ -478,13 +513,13 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 | Protocol types, version, snapshot codec | ✅ Complete |
 | Trystero transport, host + client | ✅ Complete — behind a `Transport` seam |
 | Lobby screens and code entry | ✅ Complete |
-| Snapshot broadcast and apply | ⬜ Planned |
-| Event-driven client audio | ⬜ Planned |
+| Snapshot broadcast and apply | ✅ Complete |
+| Event-driven client audio | ✅ Complete |
 | Interpolation | ⬜ Planned |
 | Client-side prediction | ⬜ Planned |
 | Disconnect / reconnect / host-left | ⬜ Planned |
-| Client game-over screen with host status | ⬜ Planned |
-| Room survives game over, host restarts from the lobby | ⬜ Planned |
+| Client game-over screen with host status | ✅ Complete |
+| Room survives game over, host restarts from the lobby | ✅ Complete |
 | Host picks a library level before hosting | ⬜ Planned |
 | Mid-level joining | ⬜ Planned — after Phase 5; next-level joining ships first |
 | WebSocket relay fallback | ⬜ Deferred — only if NAT failures prove common |

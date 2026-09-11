@@ -26,7 +26,12 @@ import { NetHost } from './net/NetHost';
 import { NetClient } from './net/NetClient';
 import type { JoinFailure } from './net/NetClient';
 import type { CodeEntry, LobbyView } from './net/LobbyScreen';
-import { drawLobbyScreen, hitsLeaveButton, showCodeEntry } from './net/LobbyScreen';
+import { drawClientGameOver, drawLobbyScreen, hitsLeaveButton, hitsStartButton, showCodeEntry } from './net/LobbyScreen';
+import { NetEvents } from './net/NetEvents';
+import { InputSampler } from './net/InputSampler';
+import { ClientGame } from './net/ClientGame';
+import type { HostPhase, Snapshot } from './net/Protocol';
+import { SNAPSHOT_HZ } from './net/Protocol';
 
 
 // Enemy eye-return speed (constant regardless of level)
@@ -67,6 +72,7 @@ function checkFruitCollision(): void {
             Stats.addToScore(score);
             gameState.scorePopups.push({ x: fx, y: fy, score, endTime: Time.timeSinceStart + 2.0 });
             gameState.fruitActive = null;
+            NetEvents.record({ e: 'fruit' });
             break;
         }
     }
@@ -360,6 +366,7 @@ function eatEnemy(enemy: IGameObject, player: PlayerState): void {
     Time.addTimer(0.5, () => { player.frozen = false; });
 
     Sound.enemyEaten();
+    NetEvents.record({ e: 'eatEnemy', chain: gameState.enemyEatenChain });
 
     // Enemy becomes eyes and speeds home
     enemy.enemyMode = 'eyes';
@@ -543,6 +550,7 @@ function countRemainingDots(): number {
 function levelClear(): void {
     gameState.frozen = true;
     Sound.levelClear();
+    NetEvents.record({ e: 'levelClear' });
     gameState.fruitHistory.push(gameState.level);
     Time.addTimer(1.5, () => {
         gameState.level++;
@@ -696,13 +704,25 @@ function triggerGameOver(): void {
         setTimeout(() => { returningToEditor = true; }, 1500);
         return;
     }
+    // An online host falls back to its own lobby, code still live and roster
+    // intact, rather than to the menu. Game over ends the game, not the room.
+    const hosting = isNetHosting();
+    if (hosting) setHostPhase('gameover');
+
     // Use native setTimeout so the transition is independent of the game-loop
     // timer system — any error in a pending Time.addTimer callback won't block it.
     setTimeout(() => {
+        const done = (): void => {
+            if (hosting) returningToLobby = true;
+            else returningToMenu = true;
+        };
         if (Stats.qualifiesForTopTen(Stats.currentScore)) {
-            showInitialsEntry(() => { returningToMenu = true; });
+            // Clients sit on GAME OVER meanwhile — the host saves the score, so
+            // there is nothing for them to type, only something to wait for.
+            if (hosting) setHostPhase('initials');
+            showInitialsEntry(done);
         } else {
-            setTimeout(() => { returningToMenu = true; }, 2000);
+            setTimeout(done, 2000);
         }
     }, 1500);
 }
@@ -712,6 +732,7 @@ function loseLife(player: PlayerState): void {
     player.dying = true;
     player.deathProgress = 0;
     Sound.death();
+    NetEvents.record({ e: 'death', playerId: player.id });
 
     Time.addTimer(DEATH_ANIM_DURATION, () => {
         // levelClear() resets dying to false — if it already fired, skip this death entirely
@@ -779,6 +800,8 @@ function makePlayerOnTileChanged(player: PlayerState): (x: number, y: number) =>
             Time.addTimer(0.01666666667, () => { player.actor.moveSpeed = getCurrentPlayerSpeed(); });
             incrementDotCounters();
             Sound.dot();
+            NetEvents.record({ e: 'dot' });
+            NetEvents.recordEaten(x, y);
             if (countRemainingDots() === 0) levelClear();
         }
 
@@ -790,6 +813,8 @@ function makePlayerOnTileChanged(player: PlayerState): (x: number, y: number) =>
             Time.addTimer(0.05, () => { player.actor.moveSpeed = getCurrentPlayerSpeed(); });
             incrementDotCounters();
             Sound.energizer();
+            NetEvents.record({ e: 'power' });
+            NetEvents.recordEaten(x, y);
             activateFrightened();
             if (countRemainingDots() === 0) levelClear();
         }
@@ -901,6 +926,31 @@ function update(): void {
         return;
     }
 
+    if (returningToLobby) {
+        returningToLobby = false;
+        Sound.stopSiren();
+        // Tell the clients where the host went before the world they are
+        // drawing is torn down.
+        setHostPhase('lobby');
+        broadcastSnapshotNow();
+        NetEvents.setRecording(false);
+        // Seat inputs belong to NetHost and are reused by the next game, so
+        // only the host's own input is destroyed with the player list.
+        for (const p of gameState.players) {
+            if (!(p.input instanceof RemotePlayerInput)) p.input.destroy();
+        }
+        gameState.players = [];
+        gameState.gameObjects = [];
+        gameStarted = true; // the lobby is a screen, not the menu
+        netHost?.setInProgress(false);
+        if (lobbyView !== null) {
+            lobbyView.status = lobbyStatusFor(netHost?.roster().length ?? 1);
+            lobbyView.roster = netHost?.roster() ?? lobbyView.roster;
+        }
+        enterLobby();
+        return;
+    }
+
     if (returningToMenu || returningToPlayerSelect) {
         const toSelect = returningToPlayerSelect;
         returningToMenu = false;
@@ -964,7 +1014,75 @@ function update(): void {
         Draw.gameOverScreen();
     }
 
+    broadcastSnapshotIfDue();
+
     window.requestAnimationFrame(update);
+}
+
+/** 60 Hz render, 20 Hz on the wire — every third frame. */
+const FRAMES_PER_SNAPSHOT = Math.round(60 / SNAPSHOT_HZ);
+
+function broadcastSnapshotIfDue(): void {
+    if (netHost === null || hostPhase === 'lobby') return;
+    snapshotTick++;
+    if (snapshotTick % FRAMES_PER_SNAPSHOT !== 0) return;
+    netHost.broadcastSnapshot(buildSnapshot());
+}
+
+/**
+ * Send state now rather than on the next tick. Used for the last snapshot of a
+ * game, the one that tells clients the host has gone back to the lobby — after
+ * it, this loop stops and there is no next tick.
+ */
+function broadcastSnapshotNow(): void {
+    netHost?.broadcastSnapshot(buildSnapshot());
+}
+
+function buildSnapshot(): Snapshot {
+    const { events, eaten } = NetEvents.drain();
+    return {
+        t: 'snap',
+        tick: snapshotTick,
+        ack: netHost?.acks() ?? {},
+        players: gameState.players.map(p => ({
+            id: p.id,
+            x: p.actor.x,
+            y: p.actor.y,
+            dir: p.actor.moveDir,
+            active: p.active,
+            dying: p.dying,
+            deathProgress: p.deathProgress,
+            frozen: p.frozen,
+        })),
+        enemies: gameState.enemies.map(e => ({
+            x: e.x,
+            y: e.y,
+            dir: e.moveDir,
+            mode: e.enemyMode ?? 'house',
+        })),
+        score: Stats.currentScore,
+        lives: gameState.sharedLives,
+        level: gameState.level,
+        frightenedRemaining: gameState.frightenedRemaining,
+        fruit: gameState.fruitActive === null
+            ? null
+            : { x: gameState.fruitActive.x, y: gameState.fruitActive.y },
+        showReady: gameState.showReady,
+        frozen: gameState.frozen,
+        gameOver: gameState.gameOver,
+        hostPhase,
+        eaten,
+        events,
+    };
+}
+
+function setHostPhase(phase: HostPhase): void {
+    hostPhase = phase;
+}
+
+/** True while this machine is hosting a networked game, not just a lobby. */
+function isNetHosting(): boolean {
+    return netHost !== null && hostPhase !== 'lobby';
 }
 
 function testModeEscHandler(e: KeyboardEvent): void {
@@ -1094,11 +1212,25 @@ const MENU_ITEMS = ['play', 'host', 'join'] as const;
 type MenuItem = typeof MENU_ITEMS[number];
 let menuIndex = 0;
 
-// Online session state. Exactly one of these is set while a lobby is up.
+// Online session state. Exactly one of netHost / netClient is set while a
+// lobby is up, and stays set through the game that lobby starts.
 let netHost: NetHost | null = null;
 let netClient: NetClient | null = null;
 let lobbyView: LobbyView | null = null;
 let lobbyRunning = false;
+let returningToLobby = false;
+
+// Host side, while a networked game runs.
+let hostPhase: HostPhase = 'lobby';
+let snapshotTick = 0;
+
+// Client side, while a networked game runs.
+let clientGame: ClientGame | null = null;
+let clientRunning = false;
+let clientInput: InputSampler | null = null;
+let clientPhase: HostPhase = 'lobby';
+let lastSentHeld = -1;
+let framesSinceInput = 0;
 
 let menuAnimTime = 0;
 let menuAnimLastTs = 0;
@@ -1278,6 +1410,8 @@ function startJoining(): void {
             netClient = new NetClient({
                 code,
                 name: localPlayerName(),
+                onStart: (level) => { startClientGame(level); },
+                onSnapshot: (snapshot) => { applyClientSnapshot(snapshot); },
                 onWelcome: (playerId) => {
                     entry?.close();
                     lobbyView = {
@@ -1296,10 +1430,13 @@ function startJoining(): void {
                 },
                 onFailure: (failure) => {
                     netClient = null;
-                    // Once seated, the lobby screen owns the message and its
-                    // LEAVE button; before that, the code entry is still up and
-                    // the player can simply retype.
-                    if (lobbyView !== null) lobbyView.error = joinFailureText(failure);
+                    // Mid-game there is nothing left to watch, so the host
+                    // leaving returns everyone to the menu. Once seated in a
+                    // lobby the screen owns the message and its LEAVE button;
+                    // before that, the code entry is still up and the player
+                    // can simply retype.
+                    if (clientRunning) leaveOnlineGame();
+                    else if (lobbyView !== null) lobbyView.error = joinFailureText(failure);
                     else entry?.setError(joinFailureText(failure));
                 },
             });
@@ -1326,7 +1463,10 @@ function joinFailureText(failure: JoinFailure): string {
 
 function enterLobby(): void {
     lobbyRunning = true;
-    document.onkeydown = (e: KeyboardEvent) => { if (e.key === 'Escape') leaveLobby(); };
+    document.onkeydown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') leaveLobby();
+        else if (e.key === 'Enter' || e.key === ' ') hostStartGame();
+    };
     gameState.canvas.addEventListener('click', onLobbyTap);
     gameState.canvas.addEventListener('touchend', onLobbyTouch, { passive: false } as EventListenerOptions);
     lobbyFrame();
@@ -1337,14 +1477,19 @@ function enterLobby(): void {
 // re-enter whatever the menu has highlighted.
 function onLobbyTap(e: MouseEvent): void {
     e.stopPropagation();
-    if (hitsLeaveButton(...canvasPoint(e.clientX, e.clientY))) leaveLobby();
+    handleLobbyPoint(...canvasPoint(e.clientX, e.clientY));
 }
 
 function onLobbyTouch(e: TouchEvent): void {
     e.stopPropagation();
     e.preventDefault();
     const touch = e.changedTouches[0];
-    if (hitsLeaveButton(...canvasPoint(touch.clientX, touch.clientY))) leaveLobby();
+    handleLobbyPoint(...canvasPoint(touch.clientX, touch.clientY));
+}
+
+function handleLobbyPoint(x: number, y: number): void {
+    if (hitsLeaveButton(x, y)) leaveLobby();
+    else if (hitsStartButton(x, y)) hostStartGame();
 }
 
 /** Client coordinates to canvas coordinates — the canvas is CSS-scaled. */
@@ -1357,30 +1502,188 @@ function canvasPoint(clientX: number, clientY: number): [number, number] {
     ];
 }
 
+let lobbyPrevA = false;
 let lobbyPrevB = false;
+let clientPrevB = false;
 
 function lobbyFrame(): void {
     if (!lobbyRunning || lobbyView === null) return;
 
     const gp = (navigator.getGamepads ? navigator.getGamepads() : [])[0] ?? null;
     const bDown = gp?.buttons[1]?.pressed ?? false;
+    const aDown = (gp?.buttons[0]?.pressed ?? false) || (gp?.buttons[3]?.pressed ?? false);
     if (bDown && !lobbyPrevB) { lobbyPrevB = bDown; leaveLobby(); return; }
     lobbyPrevB = bDown;
+    if (aDown && !lobbyPrevA) { lobbyPrevA = aDown; hostStartGame(); return; }
+    lobbyPrevA = aDown;
 
     drawLobbyScreen(lobbyView);
     window.requestAnimationFrame(lobbyFrame);
 }
 
+/**
+ * Start the game everyone in the lobby is waiting for.
+ *
+ * Remote players are seated exactly like local ones: a `RemotePlayerInput` is a
+ * `PlayerInput`, so `start()` takes it without knowing the difference.
+ */
+function hostStartGame(): void {
+    if (!lobbyRunning || netHost === null) return;
+
+    const localInputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
+    if (GamepadPlayerInput.connectedIndices().includes(0)) localInputs.push(new GamepadPlayerInput(0));
+    const slots: ConfirmedSlot[] = [
+        { id: 1, input: new CompositePlayerInput(localInputs) as PlayerInput },
+        ...netHost.seatList().map(seat => ({ id: seat.playerId, input: seat.input as PlayerInput })),
+    ];
+
+    exitLobbyScreen();
+    NetEvents.setRecording(true);
+    snapshotTick = 0;
+    setHostPhase('playing');
+    netHost.startGame();
+    start(slots);
+}
+
+/** Stop drawing the lobby and drop its handlers, without closing the room. */
+function exitLobbyScreen(): void {
+    lobbyRunning = false;
+    gameState.canvas.removeEventListener('click', onLobbyTap);
+    gameState.canvas.removeEventListener('touchend', onLobbyTouch);
+    document.onkeydown = null;
+}
+
 function leaveLobby(): void {
     if (!lobbyRunning) return;
-    lobbyRunning = false;
+    exitLobbyScreen();
+    closeOnlineSession();
+    showStartScreen();
+}
+
+function closeOnlineSession(): void {
     netHost?.close();
     netHost = null;
     netClient?.leave();
     netClient = null;
     lobbyView = null;
-    gameState.canvas.removeEventListener('click', onLobbyTap);
-    gameState.canvas.removeEventListener('touchend', onLobbyTouch);
+    setHostPhase('lobby');
+    NetEvents.setRecording(false);
+}
+
+// Input goes out on change, with a heartbeat so a held direction keeps landing
+// even when nothing about it changes.
+const INPUT_HEARTBEAT_FRAMES = 6;
+
+function startClientGame(level: LevelData): void {
+    if (netClient === null) return;
+    if (clientRunning) stopClientGame();
+    exitLobbyScreen();
+
+    const inputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
+    if (GamepadPlayerInput.connectedIndices().includes(0)) inputs.push(new GamepadPlayerInput(0));
+    clientInput = new InputSampler(new CompositePlayerInput(inputs) as PlayerInput);
+
+    clientGame = new ClientGame(level);
+    clientPhase = 'playing';
+    clientRunning = true;
+    lastSentHeld = -1;
+    framesSinceInput = 0;
+
+    document.onkeydown = (e: KeyboardEvent) => { if (e.key === 'Escape') leaveOnlineGame(); };
+    gameState.canvas.addEventListener('click', onClientTap);
+    gameState.canvas.addEventListener('touchend', onClientTouch, { passive: false } as EventListenerOptions);
+    clientFrame();
+}
+
+function clientFrame(): void {
+    if (!clientRunning) return;
+
+    // The client runs no simulation, but animations, flashing and the death
+    // fade all read the clock.
+    Time.update();
+
+    const gp = (navigator.getGamepads ? navigator.getGamepads() : [])[0] ?? null;
+    const bDown = gp?.buttons[1]?.pressed ?? false;
+    if (bDown && !clientPrevB && clientPhase !== 'playing') { clientPrevB = bDown; leaveOnlineGame(); return; }
+    clientPrevB = bDown;
+
+    if (clientPhase === 'playing') sendClientInput();
+
+    if (clientPhase === 'initials') {
+        // The host is typing initials. Clients never enter them — the host
+        // saves the score — so all they need is to know the wait is real.
+        Sound.stopSiren();
+        drawClientGameOver(Stats.currentScore, 'WAITING FOR THE HOST...');
+    } else {
+        clientGame?.draw();
+        clientGame?.updateSiren();
+    }
+
+    window.requestAnimationFrame(clientFrame);
+}
+
+function sendClientInput(): void {
+    if (clientInput === null || netClient === null) return;
+    const { held, buffered } = clientInput.sample();
+    framesSinceInput++;
+    // A buffered turn is an edge and is never held back for the heartbeat.
+    if (held === lastSentHeld && buffered === null && framesSinceInput < INPUT_HEARTBEAT_FRAMES) return;
+    netClient.sendInput(held, buffered);
+    lastSentHeld = held;
+    framesSinceInput = 0;
+}
+
+function applyClientSnapshot(snapshot: Snapshot): void {
+    if (clientGame === null) return;
+    if (snapshot.hostPhase === 'lobby') { returnClientToLobby(); return; }
+    clientPhase = snapshot.hostPhase;
+    clientGame.apply(snapshot);
+}
+
+function onClientTap(e: MouseEvent): void {
+    e.stopPropagation();
+    if (clientPhase === 'playing') return; // taps are steering during play
+    if (hitsLeaveButton(...canvasPoint(e.clientX, e.clientY))) leaveOnlineGame();
+}
+
+function onClientTouch(e: TouchEvent): void {
+    if (clientPhase === 'playing') return;
+    e.stopPropagation();
+    const touch = e.changedTouches[0];
+    if (hitsLeaveButton(...canvasPoint(touch.clientX, touch.clientY))) leaveOnlineGame();
+}
+
+/** Tear down the client's world, leaving the room connection alone. */
+function stopClientGame(): void {
+    clientRunning = false;
+    clientPhase = 'lobby';
+    clientInput?.destroy();
+    clientInput = null;
+    clientGame?.destroy();
+    clientGame = null;
+    document.onkeydown = null;
+    gameState.canvas.removeEventListener('click', onClientTap);
+    gameState.canvas.removeEventListener('touchend', onClientTouch);
+}
+
+/** The host went back to its lobby, so the client follows it there. */
+function returnClientToLobby(): void {
+    stopClientGame();
+    if (netClient === null) { showStartScreen(); return; }
+    lobbyView = {
+        role: 'client',
+        code: netClient.code,
+        roster: netClient.roster,
+        selfPlayerId: netClient.playerId,
+        status: 'WAITING FOR THE HOST TO START A NEW GAME',
+        error: null,
+    };
+    enterLobby();
+}
+
+function leaveOnlineGame(): void {
+    stopClientGame();
+    closeOnlineSession();
     showStartScreen();
 }
 

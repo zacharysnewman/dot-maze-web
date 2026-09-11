@@ -1,6 +1,7 @@
 import type { LevelData } from '../types';
 import { migrateLevel } from '../editor/LevelMigrate';
-import type { ClientMessage, HostMessage, PeerInfo, RejectReason } from './Protocol';
+import type { Direction } from '../types';
+import type { ClientMessage, HostMessage, PeerInfo, RejectReason, Snapshot } from './Protocol';
 import { PROTOCOL_VERSION, decodeMessage, encodeMessage, isLobbyCode } from './Protocol';
 import type { Transport, TransportFactory } from './Transport';
 import { trysteroTransport } from './Transport';
@@ -13,6 +14,9 @@ export interface NetClientOptions {
     /** The host welcomed us — the level and our player id are settled. */
     onWelcome: (playerId: number, level: LevelData) => void;
     onRosterChange: (roster: PeerInfo[]) => void;
+    /** The host pressed START. The level comes with it — it may have changed. */
+    onStart: (level: LevelData) => void;
+    onSnapshot: (snapshot: Snapshot) => void;
     onFailure: (failure: JoinFailure) => void;
     /** Overridable so the handshake can be exercised without a network. */
     transport?: TransportFactory;
@@ -36,6 +40,7 @@ export class NetClient {
     private hostPeerId: string | null = null;
     private welcomeTimer: ReturnType<typeof setTimeout> | null = null;
     private closed = false;
+    private seq = 0;
 
     playerId = 0;
     roster: PeerInfo[] = [];
@@ -73,6 +78,17 @@ export class NetClient {
         this.welcomeTimer = setTimeout(() => this.fail('timeout'), WELCOME_TIMEOUT_MS);
     }
 
+    /**
+     * Send what the local player is asking for. The sequence number is assigned
+     * here and echoed back in `Snapshot.ack`, which is what lets the host's
+     * seat drop anything that arrives late or twice.
+     */
+    sendInput(held: number, buffered: Direction | null): void {
+        if (this.closed || this.hostPeerId === null) return;
+        this.seq++;
+        this.sendTo({ t: 'input', held, buffered, seq: this.seq }, this.hostPeerId);
+    }
+
     leave(): void {
         if (this.closed) return;
         this.closed = true;
@@ -107,9 +123,11 @@ export class NetClient {
                 this.options.onRosterChange(this.roster);
                 break;
             case 'start':
+                this.level = migrateLevel(msg.level);
+                this.options.onStart(this.level);
+                break;
             case 'snap':
-                // Gameplay messages. Nothing runs them yet — a lobby client has
-                // no game loop to feed until the simulation lands.
+                this.options.onSnapshot(msg);
                 break;
         }
     }

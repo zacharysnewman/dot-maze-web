@@ -1,6 +1,6 @@
 import type { LevelData } from '../types';
 import { RemotePlayerInput } from './RemotePlayerInput';
-import type { ClientMessage, HostMessage, PeerInfo, RejectReason } from './Protocol';
+import type { ClientMessage, HostMessage, PeerInfo, RejectReason, Snapshot } from './Protocol';
 import {
     MAX_PLAYERS, PROTOCOL_VERSION,
     decodeMessage, encodeMessage, isProtocolCompatible, randomLobbyCode,
@@ -65,7 +65,13 @@ export class NetHost {
         };
 
         this.transport.onPeerLeave = (peerId) => {
-            if (this.seats.delete(peerId)) this.publishRoster();
+            const seat = this.seats.get(peerId);
+            if (seat === undefined) return;
+            // Drop whatever they were holding. Mid-game their avatar stops
+            // rather than running at a wall for the rest of the level.
+            seat.input.clearHeld();
+            this.seats.delete(peerId);
+            this.publishRoster();
         };
     }
 
@@ -90,6 +96,27 @@ export class NetHost {
 
     setInProgress(inProgress: boolean): void {
         this.inProgress = inProgress;
+    }
+
+    /**
+     * Tell everyone a game is beginning, carrying the level in case the host
+     * picked a different one since they were welcomed.
+     */
+    startGame(): void {
+        this.inProgress = true;
+        this.sendTo({ t: 'start', level: this.level });
+    }
+
+    broadcastSnapshot(snapshot: Snapshot): void {
+        if (this.seats.size === 0) return;
+        this.sendTo(snapshot);
+    }
+
+    /** Last input sequence seen per seated player, for the snapshot's `ack`. */
+    acks(): Record<number, number> {
+        const acks: Record<number, number> = {};
+        for (const seat of this.seats.values()) acks[seat.playerId] = seat.input.lastSeq;
+        return acks;
     }
 
     close(): void {

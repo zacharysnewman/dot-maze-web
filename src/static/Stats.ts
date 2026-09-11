@@ -1,4 +1,5 @@
 import { gameState } from '../game-state';
+import { NetEvents } from '../net/NetEvents';
 
 const LS_KEY = 'player-scores';
 const LS_INITIALS_KEY = 'player-initials';
@@ -87,6 +88,7 @@ export class Stats {
         if (wasBelow10k && Stats.currentScore >= 10000 && !Stats.extraLifeAwardedThisGame) {
             Stats.extraLifeAwardedThisGame = true;
             gameState.sharedLives++;
+            NetEvents.record({ e: 'extraLife' });
         }
     }
 

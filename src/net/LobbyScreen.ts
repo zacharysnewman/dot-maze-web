@@ -12,14 +12,24 @@ export interface LobbyView {
     error: string | null;
 }
 
-/** The LEAVE button, in tile units. Exported so taps can be hit-tested. */
+// Buttons, in tile units. Taps are hit-tested against these.
 const LEAVE_BUTTON = { x: 9, y: 30, w: 10, h: 2.6 };
+const START_BUTTON = { x: 8, y: 25.2, w: 12, h: 2.8 };
 
-export function hitsLeaveButton(canvasX: number, canvasY: number): boolean {
+interface Rect { x: number; y: number; w: number; h: number }
+
+function hits(rect: Rect, canvasX: number, canvasY: number): boolean {
     const x = canvasX / unit;
     const y = canvasY / unit;
-    return x >= LEAVE_BUTTON.x && x <= LEAVE_BUTTON.x + LEAVE_BUTTON.w
-        && y >= LEAVE_BUTTON.y && y <= LEAVE_BUTTON.y + LEAVE_BUTTON.h;
+    return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+}
+
+export function hitsLeaveButton(canvasX: number, canvasY: number): boolean {
+    return hits(LEAVE_BUTTON, canvasX, canvasY);
+}
+
+export function hitsStartButton(canvasX: number, canvasY: number): boolean {
+    return hits(START_BUTTON, canvasX, canvasY);
 }
 
 export function drawLobbyScreen(view: LobbyView): void {
@@ -65,16 +75,13 @@ export function drawLobbyScreen(view: LobbyView): void {
 
     ctx.fillStyle = view.error !== null ? '#ff5555' : '#aaa';
     ctx.font = `${Math.round(unit * 0.65)}px monospace`;
-    ctx.fillText(view.error ?? view.status, cx, unit * 24.5);
+    ctx.fillText(view.error ?? view.status, cx, unit * 24);
 
-    if (view.error === null && view.role === 'host') {
-        ctx.fillStyle = '#555';
-        ctx.font = `${Math.round(unit * 0.5)}px monospace`;
-        ctx.fillText('Starting a game together arrives with the', cx, unit * 26.4);
-        ctx.fillText('next update — this is the lobby only.', cx, unit * 27.4);
+    if (view.role === 'host') {
+        drawButton(ctx, START_BUTTON, 'START', 'yellow', 'TAP - ENTER - A');
     }
 
-    drawLeaveButton(ctx);
+    drawButton(ctx, LEAVE_BUTTON, 'LEAVE', 'white', 'TAP - ESC - B');
 }
 
 function drawRosterRow(
@@ -108,25 +115,64 @@ function drawRosterRow(
     ctx.textAlign = 'center';
 }
 
-function drawLeaveButton(ctx: CanvasRenderingContext2D): void {
-    const x = LEAVE_BUTTON.x * unit;
-    const y = LEAVE_BUTTON.y * unit;
-    const w = LEAVE_BUTTON.w * unit;
-    const h = LEAVE_BUTTON.h * unit;
+function drawButton(
+    ctx: CanvasRenderingContext2D,
+    rect: Rect,
+    label: string,
+    color: string,
+    hint: string,
+): void {
+    const x = rect.x * unit;
+    const y = rect.y * unit;
+    const w = rect.w * unit;
+    const h = rect.h * unit;
 
     ctx.fillStyle = '#222';
     ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = '#888';
+    ctx.strokeStyle = color === 'yellow' ? 'yellow' : '#888';
     ctx.lineWidth = 2;
     ctx.strokeRect(x, y, w, h);
 
-    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = color;
     ctx.font = `bold ${Math.round(unit * 0.8)}px monospace`;
-    ctx.fillText('LEAVE', x + w / 2, y + h / 2);
+    ctx.fillText(label, x + w / 2, y + h / 2);
 
     ctx.fillStyle = '#555';
     ctx.font = `${Math.round(unit * 0.5)}px monospace`;
-    ctx.fillText('TAP · ESC · B', x + w / 2, y + h + unit * 1.1);
+    ctx.fillText(hint, x + w / 2, y + h + unit * 0.9);
+}
+
+/**
+ * What a client sees once the host's game is over.
+ *
+ * The status line is the point. Without it, a client watching the host type
+ * initials cannot tell a busy host from a dead connection.
+ */
+export function drawClientGameOver(score: number, status: string): void {
+    const ctx = gameState.ctx;
+    const w = gameState.canvas.width;
+    const cx = w / 2;
+
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, w, gameState.canvas.height);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.fillStyle = 'red';
+    ctx.font = `bold ${Math.round(unit * 1.6)}px monospace`;
+    ctx.fillText('GAME OVER', cx, unit * 12);
+
+    ctx.fillStyle = 'white';
+    ctx.font = `bold ${Math.round(unit * 1)}px monospace`;
+    ctx.fillText(`SCORE  ${score}`, cx, unit * 16);
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = `${Math.round(unit * 0.65)}px monospace`;
+    ctx.fillText(status, cx, unit * 21);
+
+    drawButton(ctx, LEAVE_BUTTON, 'LEAVE', 'white', 'TAP - ESC - B');
 }
 
 /** `123456` reads as one number; `1 2 3 4 5 6` reads as digits to copy. */

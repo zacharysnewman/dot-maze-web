@@ -25,8 +25,19 @@ export type TransportFactory = (roomCode: string) => Transport;
  * there is no code allocation, no collision table and no TTL, because there is
  * no server holding any of them.
  */
+/**
+ * Signalling relays to use instead of the public defaults, from `?relay=` on
+ * the URL. Two uses: pointing a private group at their own relay, which is the
+ * documented escape hatch, and pointing a test at a local one.
+ */
+function relayOverride(): string[] | null {
+    const param = new URLSearchParams(window.location.search).get('relay');
+    return param === null || param.length === 0 ? null : param.split(',');
+}
+
 export const trysteroTransport: TransportFactory = (roomCode) => {
-    const room = joinRoom({ appId: APP_ID }, roomCode);
+    const urls = relayOverride();
+    const room = joinRoom(urls === null ? { appId: APP_ID } : { appId: APP_ID, relayConfig: { urls } }, roomCode);
     const action = room.makeAction<string>(NET_ACTION);
 
     const transport: Transport = {
