@@ -681,6 +681,22 @@ adds up to whole tiles, always in the same direction. The client now stalls on
 the dots its own copy of the grid still shows. Nothing else about rubber
 banding mattered nearly as much.
 
+### Host-only state: what is left, on purpose
+
+Every sound the host plays now reaches clients, either as an event or because
+both sides start it at the same moment. Two things a client still sees
+differently, both deliberate rather than missed:
+
+- **HIGH SCORE is the machine's own.** `Stats` is per-device localStorage, and
+  only the host saves a finished game's score, so a client shows its own
+  device's best rather than the host's. Two people therefore see different
+  numbers above the same game. Sending the host's would make the shared screen
+  agree; showing your own makes the target personal. It shows your own today.
+- **The debug overlays are host-only.** Targeting arrows, enemy paths and the
+  global scatter/chase badge are drawn from state the host computes and never
+  sends, so on a client with `?dev=true` they are stale. Nothing else reads
+  that state, so the rest of the overlay is honest.
+
 ### Lives with a crowd: easier, on purpose
 
 Nothing changes here, and the effect is worth stating so it is not mistaken for
@@ -761,6 +777,7 @@ real use.
 | Divergence snaps instead of nudging | ✅ Complete — nudging bounced, and walked through walls |
 | Interpolation follows corners instead of cutting them | ✅ Complete |
 | Floating scores from eaten enemies and fruit reach clients | ✅ Complete |
+| Game-start chimes play on clients too | ✅ Complete |
 | Seats become groups (protocol 4, per-player prediction) | ⬜ Planned — Phase 6 |
 | Several local players on one machine, online | ⬜ Planned — Phase 7 |
 | Eight players, cycling colours and props | ⬜ Planned — Phase 8 |

@@ -1729,10 +1729,14 @@ function startClientGame(level: LevelData, state: Snapshot | null = null): void 
     if (clientRunning) stopClientGame();
     exitLobbyScreen();
 
-    // The host's own `start()` does this for the host. A client never goes
-    // through it, so without this the menu music plays over the whole game.
+    // The host's own `start()` does both of these for the host, and a client
+    // never goes through it: without the first the menu music plays over the
+    // whole game, and without the second the game begins in silence while the
+    // host hears it start. A player rejoining a game already in progress gets
+    // no chimes — the game did not begin, they arrived.
     Sound.stopMenuMusic();
     menuMusicPlaying = false;
+    if (state === null) Sound.introChimes();
 
     const inputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
     if (GamepadPlayerInput.connectedIndices().includes(0)) inputs.push(new GamepadPlayerInput(0));
