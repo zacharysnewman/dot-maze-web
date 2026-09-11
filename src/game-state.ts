@@ -39,6 +39,13 @@ export const gameState = {
     elroySuspended: false,          // true after Player death; clears when Orange exits house
     // Ready state (Phase 10)
     showReady: false,
+    /**
+     * The lobby code, while an online game is running. Null offline. The lobby
+     * screen is the only other place it appears, and a game cannot go back
+     * there without ending — so without this, nobody can read the code out
+     * mid-game.
+     */
+    onlineCode: null as string | null,
     // Debug overlay (enabled via ?dev=true)
     debugEnabled: false,
     debugShowTargetTiles: false,

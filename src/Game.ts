@@ -1184,6 +1184,9 @@ function start(slots: ConfirmedSlot[], level?: LevelData): void {
     Sound.stopMenuMusic();
     menuMusicPlaying = false;
 
+    // Online games carry their lobby code into the HUD; local ones show nothing.
+    gameState.onlineCode = netHost !== null && hostPhase !== 'lobby' ? netHost.code : null;
+
     gameStarted = true;
     Time.setup();
     initializeLevel(slots, level);
@@ -1684,6 +1687,7 @@ function leaveLobby(): void {
 }
 
 function closeOnlineSession(): void {
+    gameState.onlineCode = null;
     netHost?.close();
     netHost = null;
     netClient?.leave();
@@ -1714,6 +1718,7 @@ function startClientGame(level: LevelData, state: Snapshot | null = null): void 
     clientInput = new InputSampler(new CompositePlayerInput(inputs) as PlayerInput);
 
     clientGame = new ClientGame(level, netClient.playerId, state?.level ?? 1);
+    gameState.onlineCode = netClient.code;
     clientPhase = 'playing';
     clientConnection = 'connected';
     clientRunning = true;
@@ -1807,6 +1812,7 @@ function onClientTouch(e: TouchEvent): void {
 /** Tear down the client's world, leaving the room connection alone. */
 function stopClientGame(): void {
     clientRunning = false;
+    gameState.onlineCode = null;
     clientPhase = 'lobby';
     clientInput?.destroy();
     clientInput = null;

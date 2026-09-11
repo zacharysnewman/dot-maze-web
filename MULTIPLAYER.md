@@ -616,6 +616,7 @@ relay fallback, if NAT traversal proves too lossy in real use.
 | Disconnect / reconnect / host-left | ✅ Complete — manual rejoin, seat held 30 s |
 | Client game-over screen with host status | ✅ Complete |
 | Waiting banner when the host goes quiet | ✅ Complete |
+| Lobby code in the HUD during an online game | ✅ Complete — the lobby is the only other place it appears |
 | Automatic reconnection (client retries by itself) | ✅ Complete — 28 s of retries against a 30 s seat hold |
 | Room survives game over, host restarts from the lobby | ✅ Complete |
 | Host picks a library level before hosting | ✅ Complete — and between games, not only before the first |

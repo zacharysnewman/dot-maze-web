@@ -558,6 +558,15 @@ export class Draw {
             ctx.fill();
         }
 
+        // Lobby code (bottom-centre), while playing online. Dim on purpose: it
+        // is for reading out, not for looking at.
+        if (gameState.onlineCode !== null) {
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#555';
+            ctx.font = `${Math.round(unit * 0.55)}px monospace`;
+            ctx.fillText(`CODE ${gameState.onlineCode}`, gameState.canvas.width / 2, livesY - unit * 0.1);
+        }
+
         // Fruit/level counter (bottom-right, last 7 fruits)
         Draw.fruitCounter();
     }
