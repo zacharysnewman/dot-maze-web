@@ -57,10 +57,10 @@ construction.
 
 ## Lobby codes
 
-A 6-digit numeric code, or 4 characters from a 32-symbol alphabet excluding
-`0`/`O` and `1`/`I`. Both give ~1M combinations. 4 digits (10k) is enough that
-collisions are rare but small enough that a stranger can stumble in; cheating is
-not a concern but an uninvited fifth player still is.
+**Six digits**, `000000`–`999999`. A million combinations, and every input
+device the game already supports can enter digits. 4 digits (10k) would collide
+rarely enough, but is small enough that a stranger could stumble into a game —
+cheating is not a concern, an uninvited fifth player still is.
 
 The code is the Trystero room ID directly:
 
@@ -139,9 +139,15 @@ interface Snapshot {
     frightenedRemaining: number;
     fruit: { x: number; y: number } | null;
     showReady: boolean; frozen: boolean; gameOver: boolean;
+    hostPhase: HostPhase;             // what screen the host is on
     eaten: number[];                  // tile indices (y*28+x) eaten since last ack
     events: NetEvent[];               // see below
 }
+
+// `gameOver`/`frozen`/`showReady` say how to draw the maze; `hostPhase` says
+// which screen the client should be on, which is a different question once the
+// host leaves the maze behind.
+type HostPhase = 'playing' | 'gameover' | 'initials' | 'lobby';
 ```
 
 `Levels.wrapsAt()` derives wrapping from the tile grid rather than a declared
@@ -175,6 +181,30 @@ snapshot, so clients can run it unchanged.
 | Client returns within 30 s | Re-seated into the same slot, full state resent |
 | Host drops | Everyone returns to the menu — there is no host migration |
 | Tab backgrounded | `rAF` stops and the snapshot buffer starves; pause on `visibilitychange` |
+
+### The room outlives the game
+
+Game over does not end the session. The host falls back to the lobby with the
+code still live and the roster intact, and can start another game with everyone
+already seated. Only the host closing the room or leaving ends it.
+
+That makes the host's screen and the clients' screens diverge for the first
+time, which is what `hostPhase` is for:
+
+| `hostPhase` | Host sees | Clients see |
+|---|---|---|
+| `playing` | The maze | The maze |
+| `gameover` | GAME OVER | GAME OVER |
+| `initials` | Initials entry (`showInitialsEntry`) | GAME OVER + "waiting for host…" |
+| `lobby` | Lobby: code, roster, START | "waiting for host to start a new game" |
+
+The client game-over screen is **GAME OVER**, the final score, a host-status
+line, and a **LEAVE** button. The status line is the point: without it a client
+watching the host type initials has no way to tell a busy host from a hung
+connection.
+
+Clients never enter initials — the host saves the score (see Decisions), so
+there is nothing for a client to type.
 
 ---
 
@@ -292,10 +322,12 @@ bottom.
 
 - `npm i trystero`.
 - `NetHost` / `NetClient`: join, handshake, version check, roster.
-- Lobby screens: host shows the code and who has joined; join takes a code.
-  Code entry reuses the `showInitialsEntry` overlay pattern for keyboards, with
-  canvas-drawn digit selection for gamepad and touch.
+- Lobby screens: host shows the 6-digit code and who has joined; join takes a
+  code. Code entry reuses the `showInitialsEntry` overlay pattern for keyboards,
+  with canvas-drawn digit selection for gamepad and touch.
 - Menu gains `HOST ONLINE` / `JOIN ONLINE` next to the existing flow.
+- The host lobby is a screen the game returns to, not a one-shot step before
+  `start()` — Phase 3's game-over path comes back to it with the room still up.
 
 **Done when** two browsers reach a shared lobby by code and see each other's
 names. No gameplay yet.
@@ -307,6 +339,8 @@ names. No gameplay yet.
 - Client sends inputs; host feeds `RemotePlayerInput`.
 - Client builds render-only actors and draws HUD from synced values.
 - Events drive client audio.
+- Game over returns the host to its lobby; clients show GAME OVER with the host
+  status line and a LEAVE button.
 
 **Done when** two people finish a level together. It will feel floaty — the
 local player lags a full round trip — and remote motion will be visibly steppy
@@ -323,20 +357,40 @@ at 20 Hz. Both are Phase 4's problem.
 ### Phase 5 — Custom levels
 
 The editor is the most actively developed part of the project, so "play my maze
-together" is worth real attention. The host already sends `LevelData` in the
-`welcome` message; this phase is picking a level from the library before hosting
-and confirming `migrateLevel` runs on the receiving side.
+together" is the payoff. The host already sends `LevelData` in the `welcome`
+message, so this phase is the level picker on the host's lobby screen — the
+existing library modal, reused — plus confirming `migrateLevel` runs on the
+receiving side and that validation failures are caught before anyone joins
+rather than after.
 
 ---
 
-## Open decisions
+## Decisions
 
-| Question | Options | Leaning |
+| Question | Decision | Why |
 |---|---|---|
-| Code format | 4 digits / 6 digits / 4 base-32 chars | 6 digits — typable, ~1M space |
-| Who saves the high score? | Host only / everyone / nobody | Host only — `Stats` is per-device localStorage and a shared score saved four times is four identical rows |
-| Can players join mid-game? | Yes, next level / no | Next level — `initializeLevel` builds the actor list once |
-| Host leaves | Everyone to menu / migrate host | Everyone to menu — migration needs serialisable timers, which is the same wall that blocks rollback |
+| Code format | **6 digits** | ~1M combinations; enterable on every input device the game supports |
+| Who saves the high score? | **Host only** | `Stats` is per-device localStorage — a shared score saved by four players is four identical rows on four devices |
+| Joining mid-game | **At the next level**, mid-level joining planned later | `initializeLevel` builds the actor list once; see below |
+| Host leaves | **Everyone to the menu** | Host migration needs serialisable timers — the same wall that blocks rollback |
+| Client screen at game over | **GAME OVER + host status + LEAVE** | A client cannot otherwise distinguish a host typing initials from a dead connection |
+| Host picks the level | **Yes**, from the library before hosting | The editor is the most active part of the project; playing a friend's maze together is the payoff |
+
+### Mid-level joining, later
+
+A joiner waits for the next level because `initializeLevel` (`src/Game.ts:810`)
+builds `players` and `gameObjects` in one pass and nothing today appends to them
+mid-level. Supporting it needs, roughly:
+
+- Append a player without rebuilding the actor list, keeping draw order — player
+  actors are spliced ahead of the enemies so enemies draw on top.
+- Decide where a mid-level joiner appears and whether they are briefly
+  invulnerable. Dropping someone next to a chasing enemy is a bad first frame.
+- Reuse the death/revive path for the "sat out, now active" transition rather
+  than inventing a second one.
+
+Nothing in the wire format blocks it: `players` is already variable-length, and
+the `welcome` message already carries whatever state a latecomer needs.
 
 ---
 
@@ -377,7 +431,10 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 | Interpolation | ⬜ Planned |
 | Client-side prediction | ⬜ Planned |
 | Disconnect / reconnect / host-left | ⬜ Planned |
-| Custom level sync from the library | ⬜ Planned |
+| Client game-over screen with host status | ⬜ Planned |
+| Room survives game over, host restarts from the lobby | ⬜ Planned |
+| Host picks a library level before hosting | ⬜ Planned |
+| Mid-level joining | ⬜ Planned — after Phase 5; next-level joining ships first |
 | WebSocket relay fallback | ⬜ Deferred — only if NAT failures prove common |
 | Host migration | ❌ Out of scope — blocked by non-serialisable timers |
 | Anti-cheat / server validation | ❌ Out of scope — co-op, host is trusted |
