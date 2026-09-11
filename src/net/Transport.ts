@@ -1,4 +1,5 @@
 import { joinRoom } from 'trystero';
+import type { JoinRoomCallbacks, Room } from 'trystero';
 import { APP_ID, NET_ACTION } from './Protocol';
 
 /**
@@ -35,9 +36,23 @@ function relayOverride(): string[] | null {
     return param === null || param.length === 0 ? null : param.split(',');
 }
 
-export const trysteroTransport: TransportFactory = (roomCode) => {
+/**
+ * Join the room the game uses, configured the way the game configures it.
+ * Separate from the transport below so a diagnostic can join exactly what a
+ * player joins and still reach the room handle — nothing is worth measuring if
+ * the measurement sets up its own connection differently.
+ */
+export function joinGameRoom(roomCode: string, callbacks?: JoinRoomCallbacks): Room {
     const urls = relayOverride();
-    const room = joinRoom(urls === null ? { appId: APP_ID } : { appId: APP_ID, relayConfig: { urls } }, roomCode);
+    return joinRoom(
+        urls === null ? { appId: APP_ID } : { appId: APP_ID, relayConfig: { urls } },
+        roomCode,
+        callbacks,
+    );
+}
+
+export const trysteroTransport: TransportFactory = (roomCode) => {
+    const room = joinGameRoom(roomCode);
     const action = room.makeAction<string>(NET_ACTION);
 
     const transport: Transport = {

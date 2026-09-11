@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peer Connection Test</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    padding: 16px;
+  }
+  h1 { color: #fff; font-size: 16px; margin-bottom: 4px; }
+  .subtitle { color: #666; font-size: 11px; margin-bottom: 16px; line-height: 1.5; }
+  #status { color: #ffcc00; margin-bottom: 16px; min-height: 18px; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  button {
+    background: #2a2a2a;
+    color: #e0e0e0;
+    border: 1px solid #444;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    border-radius: 3px;
+  }
+  button:hover { background: #3a3a3a; border-color: #666; }
+  button:active { background: #222; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  input {
+    background: #0d0d0d;
+    color: #e0e0e0;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 18px;
+    letter-spacing: 4px;
+    width: 8em;
+    text-align: center;
+  }
+
+  .card {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+  .card-title { color: #7ec8e3; font-size: 12px; margin-bottom: 2px; }
+  .card-meta { color: #888; font-size: 11px; margin-bottom: 10px; }
+
+  .stage-state {
+    font-size: 13px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .stage-state.pending { color: #666; }
+  .stage-state.waiting { color: #ff9800; }
+  .stage-state.ok      { color: #4caf50; }
+  .stage-state.fail    { color: #ff5555; }
+
+  .ok    { color: #4caf50; }
+  .warn  { color: #ff9800; }
+  .fail  { color: #ff5555; }
+  .muted { color: #666; }
+
+  .verdict {
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 3px;
+    border: 1px solid #333;
+    background: #222;
+    line-height: 1.5;
+    margin-top: 8px;
+  }
+  .verdict.ok   { border-color: #4caf50; background: #1c2a1c; }
+  .verdict.warn { border-color: #ff9800; background: #2a241c; }
+  .verdict.fail { border-color: #ff5555; background: #2a1c1c; }
+
+  .cand {
+    font-size: 11px;
+    color: #888;
+    word-break: break-all;
+    line-height: 1.6;
+  }
+  .cand b { color: #aaa; font-weight: normal; }
+  .typ-relay { color: #4caf50; }
+  .typ-srflx { color: #7ec8e3; }
+  .typ-prflx { color: #7ec8e3; }
+  .typ-host  { color: #999; }
+
+  .section-label {
+    color: #aaa;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  #log {
+    background: #0d0d0d;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+    font-size: 11px;
+    color: #888;
+  }
+  .log-line { line-height: 1.6; word-break: break-all; }
+  .env { color: #666; font-size: 11px; line-height: 1.6; word-break: break-all; }
+  .env b { color: #aaa; font-weight: normal; }
+</style>
+</head>
+<body>
+
+<h1>Peer Connection Test</h1>
+<div class="subtitle">
+  This is the test that answers the actual question: can <b>these two devices</b> reach
+  each other? It joins a room over the same transport the game uses, and reports each
+  stage separately — so a failure lands somewhere specific instead of on "it did not
+  connect".<br><br>
+  Open this on both devices, enter the <b>same code</b> on each, and press Start on both.
+</div>
+
+<div class="controls">
+  <input id="code" inputmode="numeric" maxlength="6" placeholder="000000">
+  <button id="new-code-btn">New code</button>
+  <button id="start-btn">Start</button>
+  <button id="stop-btn">Stop</button>
+</div>
+
+<div id="status">Ready.</div>
+
+<div id="results"></div>
+
+<div class="card">
+  <div class="section-label">Log</div>
+  <div id="log"></div>
+</div>
+
+<div class="card">
+  <div class="section-label">Environment</div>
+  <div class="env" id="env"></div>
+</div>
+
+<script src="dist/peertest-7XIEEQN3.js"></script>
+
+</body>
+</html>
