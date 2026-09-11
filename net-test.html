@@ -137,7 +137,7 @@
 <div id="results"></div>
 
 <details>
-  <summary>ICE servers being tested (edit to try your own)</summary>
+  <summary>Extra ICE servers to test (paste an iceServers array)</summary>
   <textarea id="servers-json" spellcheck="false"></textarea>
 </details>
 
@@ -154,16 +154,63 @@
     { urls: 'stun:stun.cloudflare.com:3478' },
   ];
 
-  // Candidate free relays, as published by the Open Relay Project. Whether
-  // these still accept the shared credentials is exactly what we are checking.
-  const TURN_SERVERS = [
-    { urls: 'turn:openrelay.metered.ca:80',                            username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443',                           username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turns:openrelay.metered.ca:443?transport=tcp',            username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:staticauth.openrelay.metered.ca:80',                 username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:staticauth.openrelay.metered.ca:443',                username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turns:staticauth.openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-  ];
+  /**
+   * Open Relay's username/password endpoints now need an account: credentials
+   * come from a REST call keyed by a signup API key, so the old shared
+   * openrelayproject/openrelayproject pair is dead and testing it proves
+   * nothing.
+   *
+   * Their static-auth endpoint is a different scheme and still documented
+   * openly, for Nextcloud and Matrix: a shared secret, from which a client
+   * derives a short-lived credential itself — username is an expiry timestamp,
+   * password is its HMAC-SHA1 under the secret (the coturn REST scheme). That
+   * needs no account and no backend, so it is what this page tests.
+   */
+  const STATIC_AUTH = {
+    host: 'staticauth.openrelay.metered.ca',
+    secret: 'openrelayprojectsecret',
+    urls: [
+      'turn:staticauth.openrelay.metered.ca:80',
+      'turn:staticauth.openrelay.metered.ca:443',
+      'turns:staticauth.openrelay.metered.ca:443?transport=tcp',
+    ],
+  };
+
+  /** Credential lifetime. Short, since it is minted per run. */
+  const CREDENTIAL_TTL_S = 12 * 60 * 60;
+
+  function base64(bytes) {
+    let binary = '';
+    for (const b of new Uint8Array(bytes)) binary += String.fromCharCode(b);
+    return btoa(binary);
+  }
+
+  /**
+   * The coturn `use-auth-secret` scheme: the username is the UNIX time the
+   * credential stops working, and the password is its HMAC-SHA1 under the
+   * shared secret, base64'd.
+   */
+  async function staticAuthCredential(secret, expiresAt) {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+    const mac = await crypto.subtle.sign('HMAC', key, enc.encode(String(expiresAt)));
+    return base64(mac);
+  }
+
+  async function deriveStaticAuthServers() {
+    if (crypto.subtle === undefined) return { servers: [], error: 'Web Crypto unavailable (needs a secure context).' };
+    try {
+      const expiresAt = Math.floor(Date.now() / 1000) + CREDENTIAL_TTL_S;
+      const credential = await staticAuthCredential(STATIC_AUTH.secret, expiresAt);
+      return {
+        servers: STATIC_AUTH.urls.map(urls => ({ urls, username: String(expiresAt), credential })),
+        error: null,
+      };
+    } catch (e) {
+      return { servers: [], error: String(e) };
+    }
+  }
 
   const GATHER_TIMEOUT_MS = 10_000;
 
@@ -172,7 +219,9 @@
   const serversEl = document.getElementById('servers-json');
   const runBtn    = document.getElementById('run-btn');
 
-  serversEl.value = JSON.stringify(TURN_SERVERS, null, 2);
+  // Extra servers to test alongside the derived ones — paste the iceServers
+  // array from Open Relay's REST endpoint, or any other relay's credentials.
+  serversEl.value = '[]';
 
   document.getElementById('env').innerHTML =
     `<b>page:</b> ${location.href}<br>` +
@@ -390,8 +439,11 @@
    * TURN server allocated. One server at a time: several peer connections
    * gathering at once is throttled on mobile Safari, which looks like failure.
    */
-  async function testTurn(servers) {
+  async function testTurn(servers, derivationError) {
     const el = card('TURN relays', 'Does a relay allocate for this device?');
+    if (derivationError !== null && derivationError !== undefined) {
+      addSection(el, 'credential derivation', `<div class="cand fail">${derivationError}</div>`);
+    }
     const working = [];
     let sawAnyError = false;
 
@@ -437,17 +489,26 @@
     resultsEl.innerHTML = '';
     statusEl.textContent = 'Testing…';
 
-    let servers;
+    let extra;
     try {
-      servers = JSON.parse(serversEl.value);
+      extra = JSON.parse(serversEl.value);
+      if (!Array.isArray(extra)) throw new Error('expected an array');
     } catch (e) {
-      statusEl.innerHTML = `<span class="fail">ICE server list is not valid JSON: ${e}</span>`;
+      statusEl.innerHTML = `<span class="fail">Extra ICE server list is not valid JSON: ${e}</span>`;
+      runBtn.disabled = false;
+      return;
+    }
+
+    const derived = await deriveStaticAuthServers();
+    const servers = derived.servers.concat(extra);
+    if (servers.length === 0) {
+      statusEl.innerHTML = `<span class="fail">No relays to test. ${derived.error ?? ''}</span>`;
       runBtn.disabled = false;
       return;
     }
 
     const nat = await testNat();
-    const turn = await testTurn(servers);
+    const turn = await testTurn(servers, derived.error);
 
     statusEl.innerHTML = turn.working.length > 0
       ? '<span class="ok">Done — a working relay was found.</span>'
