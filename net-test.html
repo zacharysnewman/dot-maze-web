@@ -118,11 +118,13 @@
 
 <h1>Network Debug</h1>
 <div class="subtitle">
-  Multiplayer needs a direct WebRTC connection between the two devices. On the same
-  Wi-Fi that is easy. On mobile data the carrier's NAT usually blocks it, and the
-  connection only works through a TURN relay.<br>
+  Multiplayer needs a direct WebRTC connection between the two devices. Peers on the
+  same Wi-Fi reach each other by their local addresses and never involve NAT at all,
+  which is why LAN play works. Once one device is on mobile data, the connection has
+  to cross the carrier's NAT, and that usually only works through a TURN relay.<br><br>
   Run this on <b>both</b> devices — the laptop, and the phone on mobile data with Wi-Fi
-  switched off.
+  switched off. A VPN, iCloud Private Relay or Cloudflare WARP changes the answer, so
+  turn those off first if you want to measure the network itself.
 </div>
 
 <div class="copy-bar">
@@ -155,15 +157,15 @@
   // Candidate free relays, as published by the Open Relay Project. Whether
   // these still accept the shared credentials is exactly what we are checking.
   const TURN_SERVERS = [
-    { urls: 'turn:openrelay.metered.ca:80',                    username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443',                   username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turns:openrelay.metered.ca:443?transport=tcp',    username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:staticauth.openrelay.metered.ca:80',         username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:staticauth.openrelay.metered.ca:443',        username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:80',                            username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443',                           username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turns:openrelay.metered.ca:443?transport=tcp',            username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:staticauth.openrelay.metered.ca:80',                 username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:staticauth.openrelay.metered.ca:443',                username: 'openrelayproject', credential: 'openrelayproject' },
     { urls: 'turns:staticauth.openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
   ];
 
-  const GATHER_TIMEOUT_MS = 12_000;
+  const GATHER_TIMEOUT_MS = 10_000;
 
   const statusEl  = document.getElementById('status');
   const resultsEl = document.getElementById('results');
@@ -183,25 +185,42 @@
     return [c.type, c.effectiveType].filter(v => v !== undefined).join(' / ') || 'unknown';
   }
 
-  function candidateType(c) {
-    if (c.type !== undefined && c.type !== null) return c.type;
-    const m = /\btyp (\w+)/.exec(c.candidate);
-    return m === null ? '?' : m[1];
+  function field(candidate, key) {
+    const m = new RegExp(`\\b${key} (\\S+)`).exec(candidate);
+    return m === null ? null : m[1];
   }
 
-  /** The IP:port a candidate advertises, which is what NAT rewrites. */
-  function candidateAddress(c) {
-    if (c.address !== undefined && c.address !== null) return `${c.address}:${c.port}`;
+  /**
+   * Everything about a candidate this page reasons about. `base` is the local
+   * socket the candidate was sent from — the reflexive address of one base seen
+   * by two different servers is what tells NAT types apart, so it has to be read
+   * rather than assumed.
+   */
+  function describeCandidate(c) {
     const parts = c.candidate.split(' ');
-    return parts.length > 5 ? `${parts[4]}:${parts[5]}` : '?';
+    const relAddr = c.relatedAddress ?? field(c.candidate, 'raddr');
+    const relPort = c.relatedPort ?? field(c.candidate, 'rport');
+    return {
+      type: c.type ?? field(c.candidate, 'typ') ?? '?',
+      address: c.address ?? parts[4] ?? '?',
+      port: String(c.port ?? parts[5] ?? '?'),
+      protocol: c.protocol ?? '?',
+      // Safari leaves `url` undefined and Chrome reports '' for host candidates,
+      // so which server answered is not always knowable; the base comparison
+      // below works either way.
+      url: c.url === undefined || c.url === null || c.url === '' ? null : c.url,
+      base: relAddr === null || relPort === null ? null : `${relAddr}:${relPort}`,
+    };
   }
 
   /**
    * Gather ICE candidates under one configuration and report everything that
    * came back, including the errors — a TURN server that rejects the
-   * credentials answers with a 401, which is the useful part.
+   * credentials answers with a 401, which is the useful part. Safari does not
+   * fire icecandidateerror at all, so an empty error list means "no information",
+   * never "no errors".
    */
-  function gather(config) {
+  function gather(config, timeoutMs = GATHER_TIMEOUT_MS) {
     return new Promise(resolve => {
       const candidates = [];
       const errors = [];
@@ -210,27 +229,25 @@
       try {
         pc = new RTCPeerConnection(config);
       } catch (e) {
-        resolve({ candidates, errors: [{ url: '-', errorCode: 0, errorText: String(e) }], failed: String(e) });
+        resolve({ candidates, errors, failed: String(e), timedOut: false });
         return;
       }
 
-      const finish = () => {
+      let done = false;
+      const finish = (timedOut) => {
+        if (done) return;
+        done = true;
         clearTimeout(timer);
         pc.close();
-        resolve({ candidates, errors, failed: null });
+        resolve({ candidates, errors, failed: null, timedOut });
       };
 
-      const timer = setTimeout(finish, GATHER_TIMEOUT_MS);
+      const timer = setTimeout(() => finish(true), timeoutMs);
 
       pc.onicecandidate = e => {
-        if (e.candidate === null) { finish(); return; }
+        if (e.candidate === null) { finish(false); return; }
         if (e.candidate.candidate === '') return;
-        candidates.push({
-          type: candidateType(e.candidate),
-          address: candidateAddress(e.candidate),
-          protocol: e.candidate.protocol ?? '?',
-          line: e.candidate.candidate,
-        });
+        candidates.push(describeCandidate(e.candidate));
       };
 
       pc.onicecandidateerror = e => {
@@ -240,7 +257,7 @@
       pc.createDataChannel('probe');
       pc.createOffer()
         .then(offer => pc.setLocalDescription(offer))
-        .catch(e => { clearTimeout(timer); pc.close(); resolve({ candidates, errors, failed: String(e) }); });
+        .catch(e => finish(false));
     });
   }
 
@@ -263,7 +280,9 @@
   function renderCandidates(list) {
     if (list.length === 0) return '<div class="cand muted">none</div>';
     return list.map(c =>
-      `<div class="cand"><span class="typ-${c.type}">${c.type}</span> ${c.address} <span class="muted">${c.protocol}</span></div>`
+      `<div class="cand"><span class="typ-${c.type}">${c.type}</span> ${c.address}:${c.port}` +
+      ` <span class="muted">${c.protocol}${c.base === null ? '' : ` from ${c.base}`}` +
+      `${c.url === null ? '' : ` via ${c.url}`}</span></div>`
     ).join('');
   }
 
@@ -278,79 +297,145 @@
   }
 
   /**
-   * Two STUN servers, two mapped ports. A NAT that gives the same port to both
-   * is one WebRTC can punch through; a different port each time is symmetric
-   * NAT, where nothing but a relay will connect.
+   * Group reflexive candidates by the local socket that produced them, and ask
+   * whether any one socket was given more than one public address. That — not a
+   * comparison across sockets — is what separates symmetric NAT from the rest.
+   *
+   * `attributed` says whether the browser told us which server answered, which
+   * is what decides between a confident and a provisional verdict.
+   */
+  function classifyMapping(srflx) {
+    const byBase = new Map();
+    for (const c of srflx) {
+      const key = c.base ?? 'unknown';
+      if (!byBase.has(key)) byBase.set(key, { mappings: new Set(), urls: new Set() });
+      const g = byBase.get(key);
+      g.mappings.add(`${c.address}:${c.port}`);
+      if (c.url !== null && c.url !== undefined) g.urls.add(c.url);
+    }
+    const groups = [...byBase.values()];
+    return {
+      symmetric: groups.filter(g => g.mappings.size > 1),
+      stable: groups.filter(g => g.mappings.size === 1),
+      attributed: groups.some(g => g.urls.size > 1),
+      publicIps: [...new Set(srflx.map(c => c.address))],
+    };
+  }
+
+  /**
+   * NAT mapping behaviour, measured the only way it can be: one peer connection
+   * holding both STUN servers, so both queries leave from the same local socket.
+   * Asking each server on its own connection would compare two different sockets,
+   * which every NAT maps to different ports — that measures nothing.
+   *
+   * Per local socket, then: one reflexive address means the mapping does not
+   * depend on who is asking, and a direct connection has something to work with.
+   * Two different ones mean symmetric NAT, where only a relay gets through.
    */
   async function testNat() {
-    const el = card('NAT and STUN', 'Can this device be reached directly?');
-    addSection(el, 'status', '<div class="cand muted">gathering…</div>');
+    const el = card('NAT and STUN', 'How does this network map outbound connections?');
+    const pending = addSection(el, 'status', '<div class="cand muted">gathering…</div>');
 
-    const results = await Promise.all(STUN_SERVERS.map(s => gather({ iceServers: [s] })));
-    el.querySelector('.section').remove();
+    const r = await gather({ iceServers: STUN_SERVERS });
+    pending.remove();
 
-    const mapped = [];
-    results.forEach((r, i) => {
-      const srflx = r.candidates.filter(c => c.type === 'srflx');
-      const label = STUN_SERVERS[i].urls;
-      if (srflx.length > 0) mapped.push(srflx[0].address);
-      addSection(el, label, renderCandidates(srflx) + renderErrors(r.errors), 'url');
-    });
+    const srflx = r.candidates.filter(c => c.type === 'srflx');
+    const host  = r.candidates.filter(c => c.type === 'host');
+
+    addSection(el, `reflexive candidates (${STUN_SERVERS.map(s => s.urls).join(', ')})`,
+      renderCandidates(srflx) + renderErrors(r.errors), 'url');
+    addSection(el, 'local candidates', renderCandidates(host));
+
+    const { symmetric, stable, attributed, publicIps } = classifyMapping(srflx);
 
     let verdict, cls;
-    if (mapped.length === 0) {
-      verdict = 'No public address at all — STUN is blocked here. Peer-to-peer cannot work on this network without a relay.';
+    if (srflx.length === 0) {
+      verdict = r.timedOut
+        ? 'No reflexive candidate before the timeout — STUN did not answer. Either it is blocked here, or gathering was cut short.'
+        : 'No reflexive candidate at all — STUN is blocked on this network. Peer-to-peer cannot work here without a relay.';
       cls = 'fail';
-    } else if (mapped.length === 1) {
-      verdict = `Public address ${mapped[0]}. Only one STUN server answered, so the NAT type is inconclusive.`;
-      cls = 'warn';
+    } else if (symmetric.length > 0) {
+      verdict = `Symmetric NAT: ${symmetric.length} local socket(s) got a different public address per STUN server ` +
+        `(${[...symmetric[0].mappings].join(' vs ')}). A direct connection cannot be made from here — only a relay will work.`;
+      cls = 'fail';
+    } else if (stable.length > 0 && attributed) {
+      verdict = `Public address ${publicIps.join(', ')}, and it is the same towards both STUN servers. ` +
+        `The mapping does not depend on the destination, so a direct connection has a good chance here.`;
+      cls = 'ok';
     } else {
-      const ports = mapped.map(a => a.split(':').pop());
-      const ips = mapped.map(a => a.split(':').slice(0, -1).join(':'));
-      if (ports[0] === ports[1] && ips[0] === ips[1]) {
-        verdict = `Public address ${mapped[0]}, and it is the same towards both STUN servers — a NAT WebRTC can usually punch through.`;
-        cls = 'ok';
-      } else {
-        verdict = `Mapped to ${mapped.join(' and ')} — a different port per destination. This is symmetric NAT (typical of mobile data), and it is why the direct connection fails. Only a TURN relay will get through.`;
-        cls = 'fail';
-      }
+      // Without per-candidate `url` (Safari) a single mapping per socket is the
+      // shape a stable NAT produces, but a server that never answered looks the
+      // same, so this does not get to claim more than it knows.
+      verdict = `Public address ${publicIps.join(', ')}. Each local socket reported one mapping, which is what a ` +
+        `direct-connection-friendly NAT looks like — but this browser does not say which STUN server answered, so ` +
+        `a silent server would look identical. Treat as probable, not certain.`;
+      cls = 'warn';
     }
-    addSection(el, 'verdict', `<div class="verdict ${cls}">${verdict}</div>`);
-    return { mapped, verdict };
+
+    // A Cloudflare-range public address on a phone usually means the traffic is
+    // tunnelled, which measures the tunnel rather than the network.
+    const tunnelled = publicIps.some(ip => /^(104\.(1[6-9]|2[0-9]|3[01])\.|172\.(6[4-9]|7[0-1])\.|162\.15[89]\.)/.test(ip));
+    const note = tunnelled
+      ? `<div class="verdict warn" style="margin-top:8px">Note: ${publicIps.join(', ')} is in Cloudflare's range. ` +
+        `That usually means iCloud Private Relay, Cloudflare WARP or a VPN is carrying this traffic, and the result ` +
+        `above describes that tunnel, not your Wi-Fi or carrier. Turn it off and run this again.</div>`
+      : '';
+
+    addSection(el, 'verdict', `<div class="verdict ${cls}">${verdict}</div>${note}`);
+    return { verdict, publicIps };
   }
 
   /**
    * Force `relay` transport, so the only candidate that can appear is one the
-   * TURN server allocated. If one shows up, that server works from here.
+   * TURN server allocated. One server at a time: several peer connections
+   * gathering at once is throttled on mobile Safari, which looks like failure.
    */
   async function testTurn(servers) {
     const el = card('TURN relays', 'Does a relay allocate for this device?');
-    const anyWorking = [];
+    const working = [];
+    let sawAnyError = false;
 
-    await Promise.all(servers.map(async (server) => {
+    for (let i = 0; i < servers.length; i++) {
+      const server = servers[i];
+      statusEl.textContent = `Testing relay ${i + 1} of ${servers.length}…`;
       const section = addSection(el, server.urls, '<div class="cand muted">testing…</div>', 'url');
-      const r = await gather({ iceServers: [server], iceTransportPolicy: 'relay' });
+
+      const r = await gather({ iceServers: [server], iceTransportPolicy: 'relay' }, 8_000);
       const relays = r.candidates.filter(c => c.type === 'relay');
       const works = relays.length > 0;
-      if (works) anyWorking.push(server.urls);
+      if (works) working.push(server.urls);
+      if (r.errors.length > 0) sawAnyError = true;
+
       section.innerHTML =
         `<div class="section-label url">${server.urls}</div>` +
-        `<div class="cand ${works ? 'ok' : 'fail'}">${works ? 'RELAY OK' : 'no relay candidate'}</div>` +
+        `<div class="cand ${works ? 'ok' : 'fail'}">${works ? 'RELAY OK' : 'no relay candidate'}` +
+        `${r.timedOut && !works ? ' (timed out)' : ''}</div>` +
         renderCandidates(relays) + renderErrors(r.errors) +
         (r.failed === null ? '' : `<div class="cand fail">${r.failed}</div>`);
-    }));
+    }
 
-    const verdict = anyWorking.length > 0
-      ? `${anyWorking.length} of ${servers.length} relays work from this device. Adding one of these to the game fixes mobile data: ${anyWorking.join(', ')}`
-      : `No relay allocated. These servers are unusable from this device — either the credentials are dead or the relay is unreachable — so a different TURN server is needed.`;
-    addSection(el, 'verdict', `<div class="verdict ${anyWorking.length > 0 ? 'ok' : 'fail'}">${verdict}</div>`);
-    return { anyWorking, verdict };
+    let verdict, cls;
+    if (working.length > 0) {
+      verdict = `${working.length} of ${servers.length} relays work from this device: ${working.join(', ')}`;
+      cls = 'ok';
+    } else if (sawAnyError) {
+      verdict = `No relay allocated, and the browser reported why above — a 401 means the credentials were refused, ` +
+        `anything else means the server could not be reached. Either way these relays are unusable here.`;
+      cls = 'fail';
+    } else {
+      verdict = `No relay allocated, and this browser reported no reason. Safari never fires ICE error events, so ` +
+        `this does not distinguish a dead relay from a blocked one — and it is not evidence the credentials are bad. ` +
+        `Re-run in Chrome or Firefox, where the error codes come through, before concluding anything.`;
+      cls = 'warn';
+    }
+    addSection(el, 'verdict', `<div class="verdict ${cls}">${verdict}</div>`);
+    return { working, verdict, sawAnyError };
   }
 
   async function run() {
     runBtn.disabled = true;
     resultsEl.innerHTML = '';
-    statusEl.textContent = 'Testing… this takes up to 15 seconds.';
+    statusEl.textContent = 'Testing…';
 
     let servers;
     try {
@@ -364,9 +449,9 @@
     const nat = await testNat();
     const turn = await testTurn(servers);
 
-    statusEl.innerHTML = turn.anyWorking.length > 0
+    statusEl.innerHTML = turn.working.length > 0
       ? '<span class="ok">Done — a working relay was found.</span>'
-      : '<span class="fail">Done — no working relay.</span>';
+      : '<span class="warn">Done — no working relay found.</span>';
     runBtn.disabled = false;
     window.__lastResults = { nat, turn, agent: navigator.userAgent, connection: describeConnection() };
   }
