@@ -454,9 +454,9 @@ remote motion is visibly steppy at 20 Hz. Both are Phase 4's problem.
   sides compute the same number from what a snapshot already carries.
 - **Reconciliation** compares the host's position against where the prediction
   *was* when the acknowledged input went out, not against where it is now —
-  those are a round trip apart. Past a tile it shifts by the error rather than
-  jumping to the host's position, which would undo every step since; past four
-  tiles (a death, a teleport, a new level) it gives up and snaps.
+  those are a round trip apart. Past a tile and a half it gives up: it takes
+  the host's position and forgets what it had predicted. There is deliberately
+  no gentler correction below that — see below.
 - **Presence beats WebRTC.** A closed tab takes WebRTC twelve seconds or more
   to report, which is far too long to leave someone standing in a maze full of
   enemies. Silence is the faster signal: a second without input lets go of
@@ -645,6 +645,35 @@ At 8 it holds up however people arrange themselves: 1.5 Mbit/s in the worst
 case, seven connections. If 16 is ever wanted, the fix is delta-encoded binary
 snapshots — roughly a tenth of the size — not a bigger constant.
 
+### Why a divergent prediction snaps rather than easing
+
+The first version nudged the player by the error instead of snapping, to avoid
+undoing the steps taken since. Three things were wrong with that, and all three
+were visible at 160 ms of round trip:
+
+- **It fired repeatedly for one divergence.** Inputs still in flight had been
+  recorded against a position the nudge had just invalidated, so the next
+  snapshot measured the same error again and nudged again — once per snapshot
+  until the history drained. That is what bouncing is.
+- **It had no idea where walls were.** A nudge is a raw translation of up to
+  several tiles, and it moved both axes at once even though a player in a
+  corridor is only ever travelling on one. Landing inside a wall is exactly how
+  you get a player who can walk through them.
+- **It chased measurement, not drift.** A snapshot's position is the host's
+  from a moment the client cannot pin down, so a small measured difference is
+  as likely to be timing as error.
+
+A snap has none of those problems: a host position is by definition somewhere
+the host could stand, so it cannot land in a wall, and clearing the prediction
+history with it means one divergence is corrected once.
+
+The real fix was upstream of all of it, though. The host stalls a player for a
+frame on every dot and 50 ms on every power pellet; the client never ate
+anything, so its prediction gained a frame per dot — a corridor's worth of dots
+adds up to whole tiles, always in the same direction. The client now stalls on
+the dots its own copy of the grid still shows. Nothing else about rubber
+banding mattered nearly as much.
+
 ### Lives with a crowd: easier, on purpose
 
 Nothing changes here, and the effect is worth stating so it is not mistaken for
@@ -721,6 +750,9 @@ real use.
 | Waiting banner when the host goes quiet | ✅ Complete |
 | Lobby code in the HUD during an online game | ✅ Complete — the lobby is the only other place it appears |
 | Marker over your own player online | ✅ Complete — the props say which slot, this says which is yours |
+| Prediction stalls on dots, as the host does | ✅ Complete — the cause of the rubber banding |
+| Divergence snaps instead of nudging | ✅ Complete — nudging bounced, and walked through walls |
+| Interpolation follows corners instead of cutting them | ✅ Complete |
 | Seats become groups (protocol 3, per-player prediction) | ⬜ Planned — Phase 6 |
 | Several local players on one machine, online | ⬜ Planned — Phase 7 |
 | Eight players, cycling colours and props | ⬜ Planned — Phase 8 |

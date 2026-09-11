@@ -2204,6 +2204,7 @@ window.onload = function () {
                 <label><input type="checkbox" id="dbg-redzones"> Red zones</label>
                 <label><input type="checkbox" id="dbg-enemypaths"> Enemy paths</label>
                 <label><input type="checkbox" id="dbg-tilepicker"> Tile picker</label>
+                <label><input type="checkbox" id="dbg-no-predict"> Online: no prediction</label>
                 <label style="flex-direction:column;align-items:flex-start;gap:10px">
                     <span id="dbg-extra-players-label">Extra players: 0</span>
                     <input type="range" id="dbg-extra-players" min="0" max="3" value="0"
@@ -2244,6 +2245,11 @@ window.onload = function () {
         (document.getElementById('dbg-tilepicker') as HTMLInputElement).onchange = (e) => {
             gameState.debugTilePicker = (e.target as HTMLInputElement).checked;
             if (!gameState.debugTilePicker) gameState.debugSelectedTile = null;
+        };
+        (document.getElementById('dbg-no-predict') as HTMLInputElement).onchange = (e) => {
+            // Draws your own player from snapshots like everyone else. If a
+            // movement problem survives this, it is the host's, not prediction.
+            gameState.debugDisablePrediction = (e.target as HTMLInputElement).checked;
         };
         const extraPlayersSlider = document.getElementById('dbg-extra-players') as HTMLInputElement;
         const extraPlayersLabel  = document.getElementById('dbg-extra-players-label') as HTMLSpanElement;
