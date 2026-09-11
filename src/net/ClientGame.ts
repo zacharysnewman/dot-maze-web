@@ -69,7 +69,13 @@ export class ClientGame {
     /** Where the prediction thought it was when each input went out. */
     private readonly predicted = new Map<number, { x: number; y: number }>();
 
-    constructor(level: LevelData, selfPlayerId: number) {
+    /**
+     * `startLevel` is the level number the first snapshot will carry. Starting
+     * anywhere else would make that snapshot look like a level change and
+     * rebuild the dot grid, throwing away the eaten tiles a returning player
+     * was just told about.
+     */
+    constructor(level: LevelData, selfPlayerId: number, startLevel = 1) {
         this.selfPlayerId = selfPlayerId;
         this.playerStart = level.playerStart;
 
@@ -85,12 +91,12 @@ export class ClientGame {
         gameState.frozen = true;
         gameState.gameOver = false;
         gameState.showReady = true;
-        gameState.level = 1;
+        gameState.level = startLevel;
         gameState.sharedLives = 0;
         gameState.scorePopups = [];
         gameState.fruitActive = null;
         gameState.fruitHistory = [];
-        this.lastLevel = 1;
+        this.lastLevel = startLevel;
         this.lastArrival = performance.now();
     }
 
@@ -101,7 +107,12 @@ export class ClientGame {
 
     /** True when the host has gone quiet — paused, lagging, or in trouble. */
     isStarved(): boolean {
-        return performance.now() - this.lastArrival > STARVED_MS;
+        return this.silentForMs() > STARVED_MS;
+    }
+
+    /** How long since the last snapshot landed. */
+    silentForMs(): number {
+        return performance.now() - this.lastArrival;
     }
 
     /**

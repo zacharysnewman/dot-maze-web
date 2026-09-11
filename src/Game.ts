@@ -38,8 +38,9 @@ import { deepCopyLevel } from './editor/EditorState';
 import { NetEvents } from './net/NetEvents';
 import { InputSampler } from './net/InputSampler';
 import { ClientGame } from './net/ClientGame';
+import type { ConnectionState } from './net/NetClient';
 import type { HostPhase, Snapshot } from './net/Protocol';
-import { SNAPSHOT_HZ } from './net/Protocol';
+import { SNAPSHOT_HZ, tileIndex } from './net/Protocol';
 
 
 // Enemy eye-return speed (constant regardless of level)
@@ -1019,8 +1020,17 @@ function broadcastSnapshotNow(): void {
     netHost?.broadcastSnapshot(buildSnapshot());
 }
 
-function buildSnapshot(): Snapshot {
-    const { events, eaten } = NetEvents.drain();
+/**
+ * `forWelcome` builds the state a joiner or a returning player needs, which is
+ * not the same as the next broadcast. It carries every tile eaten so far rather
+ * than the handful since the last snapshot — a delta means nothing to someone
+ * who has never seen the ones before it — and it takes no events, because
+ * draining them here would steal sounds from everyone else's next snapshot.
+ */
+function buildSnapshot(forWelcome = false): Snapshot {
+    const { events, eaten } = forWelcome
+        ? { events: [], eaten: allEatenTiles() }
+        : NetEvents.drain();
     return {
         t: 'snap',
         tick: snapshotTick,
@@ -1055,6 +1065,22 @@ function buildSnapshot(): Snapshot {
         eaten,
         events,
     };
+}
+
+/** Every dot and pellet the level started with that is no longer there. */
+function allEatenTiles(): number[] {
+    const eaten: number[] = [];
+    const original = gameState.currentLevel?.tiles;
+    if (original === undefined) return eaten;
+    for (let y = 0; y < original.length; y++) {
+        for (let x = 0; x < original[y].length; x++) {
+            const was = original[y][x];
+            if ((was === 3 || was === 4) && Levels.levelDynamic[y]?.[x] !== was) {
+                eaten.push(tileIndex(x, y));
+            }
+        }
+    }
+    return eaten;
 }
 
 function setHostPhase(phase: HostPhase): void {
@@ -1214,6 +1240,7 @@ let clientGame: ClientGame | null = null;
 let clientRunning = false;
 let clientInput: InputSampler | null = null;
 let clientPhase: HostPhase = 'lobby';
+let clientConnection: ConnectionState = 'connected';
 let lastSentHeld = -1;
 let framesSinceInput = 0;
 
@@ -1385,7 +1412,7 @@ function startHosting(): void {
             const player = gameState.players.find(p => p.id === playerId);
             if (player !== undefined) player.active = false;
         },
-        latestSnapshot: () => (hostPhase === 'lobby' ? null : buildSnapshot()),
+        latestSnapshot: () => (hostPhase === 'lobby' ? null : buildSnapshot(true)),
     });
     lobbyView = {
         role: 'host',
@@ -1411,13 +1438,20 @@ function startJoining(): void {
                 name: localPlayerName(),
                 onStart: (level) => { startClientGame(level); },
                 onSnapshot: (snapshot) => { applyClientSnapshot(snapshot); },
+                onConnectionState: (state) => {
+                    clientConnection = state;
+                    if (lobbyView === null) return;
+                    lobbyView.status = state === 'reconnecting'
+                        ? 'RECONNECTING...'
+                        : 'WAITING FOR THE HOST TO START A NEW GAME';
+                },
                 onWelcome: (playerId, level, state) => {
                     entry?.close();
                     if (state !== null) {
                         // A game is already running, so this is a player coming
                         // back to a seat that was held for them. Straight into
                         // the maze, no lobby in between.
-                        startClientGame(level);
+                        startClientGame(level, state);
                         applyClientSnapshot(state);
                         return;
                     }
@@ -1626,7 +1660,14 @@ function closeOnlineSession(): void {
 // even when nothing about it changes.
 const INPUT_HEARTBEAT_FRAMES = 6;
 
-function startClientGame(level: LevelData): void {
+/**
+ * How long a client watches a silent host before treating the connection as
+ * lost and rebuilding it. Long enough to ride out a lag spike or a quick tab
+ * switch, short enough to leave most of the host's 30 s seat-hold to work with.
+ */
+const RECONNECT_AFTER_SILENCE_MS = 6000;
+
+function startClientGame(level: LevelData, state: Snapshot | null = null): void {
     if (netClient === null) return;
     if (clientRunning) stopClientGame();
     exitLobbyScreen();
@@ -1635,8 +1676,9 @@ function startClientGame(level: LevelData): void {
     if (GamepadPlayerInput.connectedIndices().includes(0)) inputs.push(new GamepadPlayerInput(0));
     clientInput = new InputSampler(new CompositePlayerInput(inputs) as PlayerInput);
 
-    clientGame = new ClientGame(level, netClient.playerId);
+    clientGame = new ClientGame(level, netClient.playerId, state?.level ?? 1);
     clientPhase = 'playing';
+    clientConnection = 'connected';
     clientRunning = true;
     lastSentHeld = -1;
     framesSinceInput = 0;
@@ -1656,10 +1698,11 @@ function clientFrame(): void {
 
     const gp = (navigator.getGamepads ? navigator.getGamepads() : [])[0] ?? null;
     const bDown = gp?.buttons[1]?.pressed ?? false;
-    if (bDown && !clientPrevB && clientPhase !== 'playing') { clientPrevB = bDown; leaveOnlineGame(); return; }
+    const canLeaveWithB = clientPhase !== 'playing' || clientConnection === 'reconnecting';
+    if (bDown && !clientPrevB && canLeaveWithB) { clientPrevB = bDown; leaveOnlineGame(); return; }
     clientPrevB = bDown;
 
-    if (clientPhase === 'playing') sendClientInput();
+    if (clientPhase === 'playing' && clientConnection === 'connected') sendClientInput();
 
     if (clientPhase === 'initials') {
         // The host is typing initials. Clients never enter them — the host
@@ -1669,9 +1712,16 @@ function clientFrame(): void {
     } else if (clientGame !== null) {
         clientGame.update();
         clientGame.draw();
-        if (clientGame.isStarved()) {
+        if (clientConnection === 'reconnecting') {
             Sound.stopSiren();
-            drawWaitingBanner();
+            const left = netClient?.reconnectSecondsLeft() ?? 0;
+            drawWaitingBanner('RECONNECTING...', `GIVING UP IN ${left}s - ESC OR B TO LEAVE`);
+        } else if (clientGame.isStarved()) {
+            Sound.stopSiren();
+            drawWaitingBanner('WAITING FOR THE HOST...');
+            // WebRTC will not admit a dead connection for another ten seconds or
+            // more, and the seat is only held for thirty. Stop waiting on it.
+            if (clientGame.silentForMs() > RECONNECT_AFTER_SILENCE_MS) netClient?.reportSilence();
         } else {
             clientGame.updateSiren();
         }

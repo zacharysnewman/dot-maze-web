@@ -206,7 +206,8 @@ snapshot, so clients can run it unchanged.
 | Client goes quiet for 1 s | Held directions released — otherwise they run at a wall |
 | Client goes quiet for 8 s | Seat held, player sat out. WebRTC needs 12 s+ to notice a closed tab |
 | Client drops | Seat held 30 s, keyed by a `clientId` in localStorage |
-| Client returns within 30 s | Same slot, and the running game arrives in the `welcome`. They sit out until the next level or life, like any player who was not there |
+| Client sees 6 s of silence | Stops waiting on WebRTC and rebuilds the connection itself, retrying for 28 s |
+| Client returns within 30 s | Same slot, and the running game arrives in the `welcome` — including every tile eaten so far, since a delta means nothing to someone who missed the ones before it. They sit out until the next level or life, like any player who was not there |
 | Host drops | Everyone returns to the menu — there is no host migration |
 | Host goes quiet | Clients say so over the frozen maze and stop predicting |
 | Tab backgrounded | Controls released on the way out, snapshot backlog dropped on the way back |
@@ -481,9 +482,7 @@ seconds rather than on WebRTC's schedule; a reload lands back in the running
 game; and a 3.5-second stall on the host raises the waiting banner and clears
 it when the host recovers.
 
-**Not done:** automatic reconnection. A dropped client does not retry by
-itself — the player rejoins by entering the code again, and the seat is waiting
-for them.
+**Automatic reconnection** landed after Phase 5 — see below.
 
 ### Phase 5 — Custom levels ✅
 
@@ -517,6 +516,32 @@ plays it — a map with its top rows stripped of dots renders that way on both
 machines. The editor's own library modal was re-checked: save, list, load, and
 the three buttons it has always had.
 
+### Automatic reconnection ✅
+
+Phase 4 held a seat for 30 seconds but made the player type the code again to
+claim it. Now the client claims it by itself.
+
+- **Silence is the trigger**, as it is on the host: six seconds without a
+  snapshot and the client stops waiting for WebRTC to admit the connection is
+  dead — it takes twelve seconds or more, which would burn most of the seat
+  hold. A dropped peer reported by the transport starts the same loop.
+- **Each attempt is a fresh room join**, five seconds apart, for twenty-eight
+  seconds in total — just inside the host's thirty, so a reconnection cannot
+  succeed into a seat that has already been freed. Then it gives up and returns
+  to the menu.
+- The screen says `RECONNECTING...` with the time left, over the frozen maze,
+  and ESC or B leaves immediately rather than waiting it out.
+- **The welcome now carries every tile eaten so far**, not the delta since the
+  last snapshot. A returning player who was sent a delta would watch the maze
+  fill back up with dots that are long gone. Building it no longer drains the
+  event buffer either — that was quietly stealing sounds from everyone else's
+  next snapshot.
+
+**Verified** in two browsers: a host stalled for nine seconds leaves the client
+saying `RECONNECTING...`, and it is back in the game by itself, with the dots
+it missed still eaten and enemies moving again; a host that closes for good
+leaves the client trying, and on the menu once the window runs out.
+
 ---
 
 ## Decisions
@@ -525,26 +550,26 @@ the three buttons it has always had.
 |---|---|---|
 | Code format | **6 digits** | ~1M combinations; enterable on every input device the game supports |
 | Who saves the high score? | **Host only** | `Stats` is per-device localStorage — a shared score saved by four players is four identical rows on four devices |
-| Joining mid-game | **At the next level**, mid-level joining planned later | `initializeLevel` builds the actor list once; see below |
+| Joining mid-game | **At the next level**. Mid-level joining is out of scope | `initializeLevel` builds the actor list once; see below |
 | Host leaves | **Everyone to the menu** | Host migration needs serialisable timers — the same wall that blocks rollback |
 | Client screen at game over | **GAME OVER + host status + LEAVE** | A client cannot otherwise distinguish a host typing initials from a dead connection |
 | Host picks the level | **Yes**, from the library before hosting | The editor is the most active part of the project; playing a friend's maze together is the payoff |
 
-### Mid-level joining, later
+### Mid-level joining, dropped
 
-A joiner waits for the next level because `initializeLevel` (`src/Game.ts:810`)
-builds `players` and `gameObjects` in one pass and nothing today appends to them
-mid-level. Supporting it needs, roughly:
+A joiner waits for the next level, and that is where it stays. `initializeLevel`
+(`src/Game.ts:810`) builds `players` and `gameObjects` in one pass and nothing
+appends to them mid-level; supporting it would mean deciding where a latecomer
+appears, whether they are briefly invulnerable, and how that interacts with the
+death-and-revive path. Waiting out one level costs a minute and nothing else.
 
-- Append a player without rebuilding the actor list, keeping draw order — player
-  actors are spliced ahead of the enemies so enemies draw on top.
-- Decide where a mid-level joiner appears and whether they are briefly
-  invulnerable. Dropping someone next to a chasing enemy is a bad first frame.
-- Reuse the death/revive path for the "sat out, now active" transition rather
-  than inventing a second one.
+The same rule covers a player who drops and comes back: they sit out exactly as
+a dead player does, and the existing revive paths bring them in at the next
+level or life. That is why reconnection needed no spawn logic of its own.
 
-Nothing in the wire format blocks it: `players` is already variable-length, and
-the `welcome` message already carries whatever state a latecomer needs.
+Nothing in the wire format forbids it if it is ever wanted: `players` is
+variable-length, the client rebuilds its player list from every snapshot, and a
+welcome already carries everything a latecomer needs.
 
 ---
 
@@ -574,9 +599,8 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 
 ## Implementation Status
 
-All five phases are done. What is left is the list below the line: mid-level
-joining, automatic reconnection, and the relay fallback if NAT traversal proves
-too lossy in real use.
+All five phases are done, and so is automatic reconnection. What is left is the
+relay fallback, if NAT traversal proves too lossy in real use.
 
 | Feature | Status |
 |---|---|
@@ -592,10 +616,10 @@ too lossy in real use.
 | Disconnect / reconnect / host-left | ✅ Complete — manual rejoin, seat held 30 s |
 | Client game-over screen with host status | ✅ Complete |
 | Waiting banner when the host goes quiet | ✅ Complete |
-| Automatic reconnection (client retries by itself) | ⬜ Planned — the seat is held; rejoining is manual |
+| Automatic reconnection (client retries by itself) | ✅ Complete — 28 s of retries against a 30 s seat hold |
 | Room survives game over, host restarts from the lobby | ✅ Complete |
 | Host picks a library level before hosting | ✅ Complete — and between games, not only before the first |
-| Mid-level joining | ⬜ Planned — after Phase 5; next-level joining ships first |
+| Mid-level joining | ❌ Out of scope — joiners and returners wait for the next level |
 | WebSocket relay fallback | ⬜ Deferred — only if NAT failures prove common |
 | Host migration | ❌ Out of scope — blocked by non-serialisable timers |
 | Anti-cheat / server validation | ❌ Out of scope — co-op, host is trusted |

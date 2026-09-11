@@ -8,6 +8,9 @@ import { trysteroTransport } from './Transport';
 
 export type JoinFailure = RejectReason | 'timeout' | 'bad-code' | 'host-left';
 
+/** What the client is doing about its connection, for the screen to report. */
+export type ConnectionState = 'connected' | 'reconnecting';
+
 export interface NetClientOptions {
     code: string;
     name: string;
@@ -22,6 +25,8 @@ export interface NetClientOptions {
     onStart: (level: LevelData) => void;
     onSnapshot: (snapshot: Snapshot) => void;
     onFailure: (failure: JoinFailure) => void;
+    /** Connection lost and being rebuilt, or back. */
+    onConnectionState?: (state: ConnectionState) => void;
     /** Overridable so the handshake can be exercised without a network. */
     transport?: TransportFactory;
 }
@@ -34,17 +39,29 @@ export interface NetClientOptions {
  */
 const WELCOME_TIMEOUT_MS = 20_000;
 
+/**
+ * Reconnection budget. The host holds a seat for 30 s, so give up a little
+ * before that rather than succeeding into a seat that has just been freed.
+ * Each attempt is a fresh room join, and a connection that is coming back
+ * usually does so on the first or second.
+ */
+const RECONNECT_WINDOW_MS = 28_000;
+const RECONNECT_ATTEMPT_MS = 5_000;
+
 /** The client half of a room: everything it knows, the host told it. */
 export class NetClient {
     readonly code: string;
 
     private readonly options: NetClientOptions;
-    private readonly transport: Transport | null = null;
+    private readonly newTransport: TransportFactory;
+    private transport: Transport | null = null;
 
     private hostPeerId: string | null = null;
     private welcomeTimer: ReturnType<typeof setTimeout> | null = null;
     private closed = false;
     private seq = 0;
+    /** When the connection was lost; 0 while it is up. */
+    private lostAt = 0;
 
     playerId = 0;
     roster: PeerInfo[] = [];
@@ -53,6 +70,7 @@ export class NetClient {
     constructor(options: NetClientOptions) {
         this.options = options;
         this.code = options.code;
+        this.newTransport = options.transport ?? trysteroTransport;
 
         if (!isLobbyCode(options.code)) {
             this.closed = true;
@@ -61,7 +79,13 @@ export class NetClient {
             return;
         }
 
-        this.transport = (options.transport ?? trysteroTransport)(options.code);
+        this.openRoom(WELCOME_TIMEOUT_MS);
+    }
+
+    /** Join the room and wait to be welcomed. Used to connect and to reconnect. */
+    private openRoom(welcomeTimeout: number): void {
+        this.hostPeerId = null;
+        this.transport = this.newTransport(this.code);
 
         this.transport.onMessage = (raw, peerId) => {
             const msg = decodeMessage(raw);
@@ -75,16 +99,76 @@ export class NetClient {
             this.sendTo({
                 t: 'hello',
                 protocol: PROTOCOL_VERSION,
-                name: options.name,
+                name: this.options.name,
                 clientId: localClientId(),
             }, peerId);
         };
 
         this.transport.onPeerLeave = (peerId) => {
-            if (peerId === this.hostPeerId) this.fail('host-left');
+            if (peerId === this.hostPeerId) this.connectionLost();
         };
 
-        this.welcomeTimer = setTimeout(() => this.fail('timeout'), WELCOME_TIMEOUT_MS);
+        this.clearWelcomeTimer();
+        this.welcomeTimer = setTimeout(() => {
+            if (this.lostAt === 0) this.fail('timeout');
+            else this.tryAgain();
+        }, welcomeTimeout);
+    }
+
+    /** True while the connection is down and being rebuilt. */
+    isReconnecting(): boolean {
+        return this.lostAt !== 0;
+    }
+
+    /** Whole seconds left before reconnection gives up, for the screen to show. */
+    reconnectSecondsLeft(): number {
+        if (this.lostAt === 0) return 0;
+        const left = RECONNECT_WINDOW_MS - (performance.now() - this.lostAt);
+        return Math.max(0, Math.ceil(left / 1000));
+    }
+
+    /**
+     * The game noticing the host has gone quiet. WebRTC takes twelve seconds or
+     * more to report a dead connection, and the host only holds a seat for
+     * thirty, so waiting for the transport to admit it wastes most of the
+     * window a reconnection has to work with.
+     */
+    reportSilence(): void {
+        this.connectionLost();
+    }
+
+    /**
+     * Start rebuilding the connection. Further losses while an attempt is in
+     * flight are ignored — the retry loop is driven by attempts timing out, not
+     * by how often the game notices the silence.
+     */
+    private connectionLost(): void {
+        if (this.closed || this.lostAt !== 0) return;
+        this.lostAt = performance.now();
+        this.options.onConnectionState?.('reconnecting');
+        this.tryAgain();
+    }
+
+    private tryAgain(): void {
+        if (this.closed) return;
+        if (performance.now() - this.lostAt > RECONNECT_WINDOW_MS) {
+            // Out of time: either the host is gone, or its seat for us is.
+            this.fail('host-left');
+            return;
+        }
+        this.dropRoom();
+        this.openRoom(RECONNECT_ATTEMPT_MS);
+    }
+
+    /** Let go of the room without ending the session. */
+    private dropRoom(): void {
+        if (this.transport === null) return;
+        this.transport.onMessage = null;
+        this.transport.onPeerJoin = null;
+        this.transport.onPeerLeave = null;
+        this.transport.leave();
+        this.transport = null;
+        this.hostPeerId = null;
     }
 
     /**
@@ -104,8 +188,10 @@ export class NetClient {
         if (this.closed) return;
         this.closed = true;
         this.clearWelcomeTimer();
+        // Leaving on purpose frees the seat now; a seat is only held for someone
+        // who dropped.
         if (this.hostPeerId !== null) this.sendTo({ t: 'leave' }, this.hostPeerId);
-        this.transport?.leave();
+        this.dropRoom();
     }
 
     private handle(msg: HostMessage, peerId: string): void {
@@ -116,6 +202,10 @@ export class NetClient {
                 if (this.hostPeerId !== null) return; // already seated
                 this.hostPeerId = peerId;
                 this.clearWelcomeTimer();
+                if (this.lostAt !== 0) {
+                    this.lostAt = 0;
+                    this.options.onConnectionState?.('connected');
+                }
                 this.playerId = msg.playerId;
                 // migrateLevel only upgrades forwards, which is exactly why the
                 // handshake carries a version: a level too new to migrate has
