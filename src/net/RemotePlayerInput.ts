@@ -24,6 +24,8 @@ export class RemotePlayerInput implements PlayerInput {
 
     /** Highest seq applied, echoed back in snapshots so the client can reconcile. */
     lastSeq = 0;
+    /** When the last message landed, for noticing a client that went quiet. */
+    lastReceivedAt = 0;
 
     /**
      * Apply an input message. Out-of-order and duplicate messages are dropped:
@@ -33,6 +35,7 @@ export class RemotePlayerInput implements PlayerInput {
     receive(msg: InputMsg): void {
         if (msg.seq <= this.lastSeq) return;
         this.lastSeq = msg.seq;
+        this.lastReceivedAt = performance.now();
 
         const held = decodeHeld(msg.held);
         this.leftPressed  = held.leftPressed;
@@ -62,5 +65,6 @@ export class RemotePlayerInput implements PlayerInput {
     destroy(): void {
         this.clearHeld();
         this.lastSeq = 0;
+        this.lastReceivedAt = 0;
     }
 }

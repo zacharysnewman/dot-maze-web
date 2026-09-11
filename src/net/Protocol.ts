@@ -10,7 +10,7 @@ import type { Direction, EnemyMode, LevelData } from '../types';
  * be refused at the handshake rather than half-working. GitHub Pages users hold
  * stale tabs for a long time, so this will happen.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Seats in a room, host included. */
 export const MAX_PLAYERS = 4;
@@ -34,6 +34,27 @@ export const CODE_LENGTH = 6;
 
 export function isLobbyCode(code: string): boolean {
     return new RegExp(`^[0-9]{${CODE_LENGTH}}$`).test(code);
+}
+
+const CLIENT_ID_KEY = 'dot-maze-client-id';
+
+/**
+ * This browser's identity to a host, stable across reloads and reconnections.
+ * Peer ids are not: Trystero mints a new one every session, so without this a
+ * player coming back looks like a stranger and their held seat is unreachable.
+ */
+export function localClientId(): string {
+    try {
+        const stored = localStorage.getItem(CLIENT_ID_KEY);
+        if (stored !== null && stored.length > 0) return stored;
+        const minted = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+        localStorage.setItem(CLIENT_ID_KEY, minted);
+        return minted;
+    } catch {
+        // Private mode: a per-session id still works, it just cannot survive a
+        // reload, so a reconnecting player takes a fresh seat instead.
+        return `c${Math.random().toString(36).slice(2, 12)}`;
+    }
 }
 
 /**
@@ -121,8 +142,12 @@ export type NetEvent =
 export interface PeerInfo {
     playerId: number;
     name: string;
+    /** False while a seat is held open for someone who dropped. */
     connected: boolean;
 }
+
+/** How long a seat is kept for a player who drops before it is given up. */
+export const RECONNECT_GRACE_MS = 30_000;
 
 export type RejectReason = 'protocol' | 'full' | 'in-progress';
 
@@ -130,6 +155,12 @@ export interface HelloMsg {
     t: 'hello';
     protocol: number;
     name: string;
+    /**
+     * Stable per browser, unlike a peer id, which is new on every connection.
+     * It is what lets a player who drops out and comes back land in the seat
+     * that was being held for them.
+     */
+    clientId: string;
 }
 
 export interface WelcomeMsg {

@@ -6,6 +6,10 @@ import { Move }  from './static/Move';
 import { startEditorMode } from './editor/EditorLoop';
 import { AI }    from './static/AI';
 import { Levels } from './static/Levels';
+import {
+    getCurrentPlayerSpeed, getEnemyFrightSpeed, getEnemyNormalSpeed,
+    getEnemyTunnelSpeed, getPlayerNormalSpeed,
+} from './static/Speeds';
 import { Stats }  from './static/Stats';
 import type { HighScoreEntry } from './static/Stats';
 import { Sound }  from './static/Sound';
@@ -26,7 +30,7 @@ import { NetHost } from './net/NetHost';
 import { NetClient } from './net/NetClient';
 import type { JoinFailure } from './net/NetClient';
 import type { CodeEntry, LobbyView } from './net/LobbyScreen';
-import { drawClientGameOver, drawLobbyScreen, hitsLeaveButton, hitsStartButton, showCodeEntry } from './net/LobbyScreen';
+import { drawClientGameOver, drawLobbyScreen, drawWaitingBanner, hitsLeaveButton, hitsStartButton, showCodeEntry } from './net/LobbyScreen';
 import { NetEvents } from './net/NetEvents';
 import { InputSampler } from './net/InputSampler';
 import { ClientGame } from './net/ClientGame';
@@ -76,41 +80,6 @@ function checkFruitCollision(): void {
             break;
         }
     }
-}
-
-// ── Speed Table (Phase 6) ─────────────────────────────────────────────────────
-// All values are fractions of max speed (1.0 = 100%)
-
-function getPlayerNormalSpeed(level: number): number {
-    if (level === 1) return 0.80;
-    if (level <= 4)  return 0.90;
-    if (level <= 20) return 1.00;
-    return 0.90; // level 21+
-}
-
-function getPlayerFrightSpeed(level: number): number {
-    if (level === 1) return 0.90;
-    if (level <= 4)  return 0.95;
-    if (level <= 20) return 1.00;
-    return 0.90; // level 21+ — no boost (same as normal)
-}
-
-function getEnemyNormalSpeed(level: number): number {
-    if (level === 1) return 0.75;
-    if (level <= 4)  return 0.85;
-    return 0.95; // level 5+
-}
-
-function getEnemyFrightSpeed(level: number): number {
-    if (level === 1) return 0.50;
-    if (level <= 4)  return 0.55;
-    return 0.60; // level 5+
-}
-
-function getEnemyTunnelSpeed(level: number): number {
-    if (level === 1) return 0.40;
-    if (level <= 4)  return 0.45;
-    return 0.50; // level 5+
 }
 
 // ── Cruise Elroy (Phase 8) ────────────────────────────────────────────────────
@@ -167,13 +136,6 @@ function updateElroy(): void {
 }
 
 // Returns the speed the Player should be moving at right now (used after a dot pause)
-function getCurrentPlayerSpeed(): number {
-    const anyFrightened = gameState.enemies.some(g => g.enemyMode === 'frightened');
-    return anyFrightened
-        ? getPlayerFrightSpeed(gameState.level)
-        : getPlayerNormalSpeed(gameState.level);
-}
-
 function isEnemyInTunnel(enemy: IGameObject): boolean {
     const x = enemy.roundedX();
     const y = enemy.roundedY();
@@ -559,8 +521,13 @@ function levelClear(): void {
         gameState.fruitSpawned1 = false;
         gameState.fruitSpawned2 = false;
         gameState.fruitActive = null;
-        // Revive all players who have lives (shared pool still > 0) for next level
-        for (const p of gameState.players) { p.active = true; p.dying = false; }
+        // Revive everyone still connected. A held seat stays sat out; reviving
+        // an absent player would feed the shared life pool to an empty chair.
+        for (const p of gameState.players) {
+            if (disconnectedPlayers.has(p.id)) continue;
+            p.active = true;
+            p.dying = false;
+        }
         resetPositions(false);
         gameState.showReady = true;
         Time.addTimer(1.5, () => {
@@ -748,8 +715,12 @@ function loseLife(player: PlayerState): void {
         } else if (gameState.sharedLives > 0) {
             // All players down but lives remain — spend one and revive everyone
             gameState.sharedLives--;
-            // Revive everyone and play READY!
-            for (const p of gameState.players) { p.active = true; p.dying = false; }
+            // Revive everyone still connected — see levelClear.
+            for (const p of gameState.players) {
+                if (disconnectedPlayers.has(p.id)) continue;
+                p.active = true;
+                p.dying = false;
+            }
             resetPositions(true);
             gameState.showReady = true;
             gameState.frozen = true;
@@ -1022,8 +993,14 @@ function update(): void {
 /** 60 Hz render, 20 Hz on the wire — every third frame. */
 const FRAMES_PER_SNAPSHOT = Math.round(60 / SNAPSHOT_HZ);
 
+// How long a client can go quiet before the host lets go of their controls,
+// and before it holds their seat and sits them out. See NetHost.presenceCheck.
+const INPUT_SILENCE_MS = 1000;
+const PRESENCE_TIMEOUT_MS = 8000;
+
 function broadcastSnapshotIfDue(): void {
     if (netHost === null || hostPhase === 'lobby') return;
+    netHost.presenceCheck(INPUT_SILENCE_MS, PRESENCE_TIMEOUT_MS);
     snapshotTick++;
     if (snapshotTick % FRAMES_PER_SNAPSHOT !== 0) return;
     netHost.broadcastSnapshot(buildSnapshot());
@@ -1223,6 +1200,8 @@ let returningToLobby = false;
 // Host side, while a networked game runs.
 let hostPhase: HostPhase = 'lobby';
 let snapshotTick = 0;
+/** Players whose seat is being held open — they sit out until they are back. */
+const disconnectedPlayers = new Set<number>();
 
 // Client side, while a networked game runs.
 let clientGame: ClientGame | null = null;
@@ -1388,6 +1367,18 @@ function startHosting(): void {
             lobbyView.roster = roster;
             lobbyView.status = lobbyStatusFor(roster.length);
         },
+        onSeatConnectionChange: (playerId, connected) => {
+            if (connected) {
+                // Back in their seat, but not back in the maze: they rejoin
+                // the way a dead player does, at the next level or life.
+                disconnectedPlayers.delete(playerId);
+                return;
+            }
+            disconnectedPlayers.add(playerId);
+            const player = gameState.players.find(p => p.id === playerId);
+            if (player !== undefined) player.active = false;
+        },
+        latestSnapshot: () => (hostPhase === 'lobby' ? null : buildSnapshot()),
     });
     lobbyView = {
         role: 'host',
@@ -1412,8 +1403,16 @@ function startJoining(): void {
                 name: localPlayerName(),
                 onStart: (level) => { startClientGame(level); },
                 onSnapshot: (snapshot) => { applyClientSnapshot(snapshot); },
-                onWelcome: (playerId) => {
+                onWelcome: (playerId, level, state) => {
                     entry?.close();
+                    if (state !== null) {
+                        // A game is already running, so this is a player coming
+                        // back to a seat that was held for them. Straight into
+                        // the maze, no lobby in between.
+                        startClientGame(level);
+                        applyClientSnapshot(state);
+                        return;
+                    }
                     lobbyView = {
                         role: 'client',
                         code,
@@ -1529,6 +1528,7 @@ function lobbyFrame(): void {
  */
 function hostStartGame(): void {
     if (!lobbyRunning || netHost === null) return;
+    disconnectedPlayers.clear();
 
     const localInputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
     if (GamepadPlayerInput.connectedIndices().includes(0)) localInputs.push(new GamepadPlayerInput(0));
@@ -1583,7 +1583,7 @@ function startClientGame(level: LevelData): void {
     if (GamepadPlayerInput.connectedIndices().includes(0)) inputs.push(new GamepadPlayerInput(0));
     clientInput = new InputSampler(new CompositePlayerInput(inputs) as PlayerInput);
 
-    clientGame = new ClientGame(level);
+    clientGame = new ClientGame(level, netClient.playerId);
     clientPhase = 'playing';
     clientRunning = true;
     lastSentHeld = -1;
@@ -1614,30 +1614,42 @@ function clientFrame(): void {
         // saves the score — so all they need is to know the wait is real.
         Sound.stopSiren();
         drawClientGameOver(Stats.currentScore, 'WAITING FOR THE HOST...');
-    } else {
-        clientGame?.draw();
-        clientGame?.updateSiren();
+    } else if (clientGame !== null) {
+        clientGame.update();
+        clientGame.draw();
+        if (clientGame.isStarved()) {
+            Sound.stopSiren();
+            drawWaitingBanner();
+        } else {
+            clientGame.updateSiren();
+        }
     }
 
     window.requestAnimationFrame(clientFrame);
 }
 
 function sendClientInput(): void {
-    if (clientInput === null || netClient === null) return;
+    if (clientInput === null || netClient === null || clientGame === null) return;
     const { held, buffered } = clientInput.sample();
     framesSinceInput++;
     // A buffered turn is an edge and is never held back for the heartbeat.
     if (held === lastSentHeld && buffered === null && framesSinceInput < INPUT_HEARTBEAT_FRAMES) return;
-    netClient.sendInput(held, buffered);
+
+    const seq = netClient.sendInput(held, buffered);
     lastSentHeld = held;
     framesSinceInput = 0;
+
+    // The same message drives the local prediction, and the position it was
+    // sent from is what the host's acknowledgement will be compared against.
+    const actor = clientGame.selfActor();
+    clientGame.applyLocalInput({ t: 'input', held, buffered, seq }, actor?.x ?? 0, actor?.y ?? 0);
 }
 
 function applyClientSnapshot(snapshot: Snapshot): void {
     if (clientGame === null) return;
     if (snapshot.hostPhase === 'lobby') { returnClientToLobby(); return; }
     clientPhase = snapshot.hostPhase;
-    clientGame.apply(snapshot);
+    clientGame.push(snapshot);
 }
 
 function onClientTap(e: MouseEvent): void {
@@ -2182,6 +2194,17 @@ window.onload = function () {
 
     // Mark controllerActive as soon as any gamepad connects (covers mid-session plug-in)
     window.addEventListener('gamepadconnected', () => { controllerActive = true; });
+
+    // A hidden tab stops rendering but keeps receiving. Let go of the controls
+    // on the way out, so nobody's avatar keeps running while they are away, and
+    // rejoin the present on the way back rather than replaying a backlog.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            clientGame?.resync();
+        } else if (clientRunning) {
+            netClient?.sendInput(0, null);
+        }
+    });
 
     document.onkeydown = menuKeyHandler;
     document.addEventListener('click', () => handleMenuInteraction());

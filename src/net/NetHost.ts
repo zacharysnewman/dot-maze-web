@@ -2,7 +2,7 @@ import type { LevelData } from '../types';
 import { RemotePlayerInput } from './RemotePlayerInput';
 import type { ClientMessage, HostMessage, PeerInfo, RejectReason, Snapshot } from './Protocol';
 import {
-    MAX_PLAYERS, PROTOCOL_VERSION,
+    MAX_PLAYERS, PROTOCOL_VERSION, RECONNECT_GRACE_MS,
     decodeMessage, encodeMessage, isProtocolCompatible, randomLobbyCode,
 } from './Protocol';
 import type { Transport, TransportFactory } from './Transport';
@@ -11,9 +11,15 @@ import { trysteroTransport } from './Transport';
 /** A seated remote player, from the host's side. */
 export interface HostSeat {
     playerId: number;
+    /** The peer this seat last spoke through. */
     peerId: string;
+    clientId: string;
     name: string;
     input: RemotePlayerInput;
+    /** False while the seat is being held open for someone who dropped. */
+    connected: boolean;
+    /** Runs out the grace period on a held seat. */
+    releaseTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface NetHostOptions {
@@ -21,6 +27,13 @@ export interface NetHostOptions {
     name: string;
     /** Fires whenever the roster changes — someone joined, left, or was refused. */
     onRosterChange: (roster: PeerInfo[]) => void;
+    /**
+     * A seated player dropped or came back. The game, not the room, decides
+     * what that means for the player standing in the maze.
+     */
+    onSeatConnectionChange?: (playerId: number, connected: boolean) => void;
+    /** The latest state of the running game, for a returning player's welcome. */
+    latestSnapshot?: () => Snapshot | null;
     /** Overridable so the handshake can be exercised without a network. */
     transport?: TransportFactory;
 }
@@ -44,7 +57,9 @@ export class NetHost {
     readonly name: string;
 
     private readonly transport: Transport;
+    /** Keyed by client id, so a seat outlives the connection that made it. */
     private readonly seats = new Map<string, HostSeat>();
+    private readonly options: NetHostOptions;
     private readonly onRosterChange: (roster: PeerInfo[]) => void;
 
     private level: LevelData;
@@ -52,6 +67,7 @@ export class NetHost {
     private inProgress = false;
 
     constructor(options: NetHostOptions) {
+        this.options = options;
         this.code = randomLobbyCode();
         this.name = options.name;
         this.level = options.level;
@@ -65,23 +81,20 @@ export class NetHost {
         };
 
         this.transport.onPeerLeave = (peerId) => {
-            const seat = this.seats.get(peerId);
-            if (seat === undefined) return;
-            // Drop whatever they were holding. Mid-game their avatar stops
-            // rather than running at a wall for the rest of the level.
-            seat.input.clearHeld();
-            this.seats.delete(peerId);
-            this.publishRoster();
+            const seat = this.seatByPeer(peerId);
+            if (seat !== undefined && seat.connected) this.holdSeat(seat);
         };
     }
 
-    /** Player 1 plus everyone seated. */
+    /** Player 1 plus everyone seated, including seats being held. */
     roster(): PeerInfo[] {
         return [
             { playerId: HOST_PLAYER_ID, name: this.name, connected: true },
-            ...[...this.seats.values()]
-                .sort((a, b) => a.playerId - b.playerId)
-                .map(seat => ({ playerId: seat.playerId, name: seat.name, connected: true })),
+            ...this.seatList().map(seat => ({
+                playerId: seat.playerId,
+                name: seat.name,
+                connected: seat.connected,
+            })),
         ];
     }
 
@@ -112,6 +125,29 @@ export class NetHost {
         this.sendTo(snapshot);
     }
 
+    /**
+     * Notice clients that have gone quiet.
+     *
+     * Clients send a heartbeat several times a second, so silence means a tab
+     * switch or a connection in trouble. WebRTC takes ten seconds or more to
+     * admit a peer is gone, which is far too long to leave someone standing in
+     * a maze full of enemies, so silence is the faster signal:
+     *
+     * - briefly: let go of their controls, or they run at a wall until
+     *   something kills them;
+     * - for a while: hold the seat and sit them out, so the team does not lose
+     *   lives to an empty chair.
+     */
+    presenceCheck(clearHeldAfterMs: number, holdSeatAfterMs: number): void {
+        const now = performance.now();
+        for (const seat of this.seats.values()) {
+            if (seat.input.lastReceivedAt === 0) continue; // never spoken; nothing to miss
+            const silent = now - seat.input.lastReceivedAt;
+            if (silent > clearHeldAfterMs) seat.input.clearHeld();
+            if (silent > holdSeatAfterMs && seat.connected) this.holdSeat(seat);
+        }
+    }
+
     /** Last input sequence seen per seated player, for the snapshot's `ack`. */
     acks(): Record<number, number> {
         const acks: Record<number, number> = {};
@@ -120,37 +156,98 @@ export class NetHost {
     }
 
     close(): void {
+        for (const seat of this.seats.values()) {
+            if (seat.releaseTimer !== null) clearTimeout(seat.releaseTimer);
+        }
         this.seats.clear();
         this.transport.leave();
+    }
+
+    private seatByPeer(peerId: string): HostSeat | undefined {
+        for (const seat of this.seats.values()) {
+            if (seat.peerId === peerId) return seat;
+        }
+        return undefined;
+    }
+
+    /**
+     * Hold the seat rather than freeing it. A player who drops keeps their slot
+     * for half a minute, which covers a reload, a tunnel, or a flaky moment —
+     * long enough to come back to the same game, short enough that a seat is
+     * not held hostage.
+     *
+     * Their player sits out meanwhile, exactly as a dead player does, and the
+     * existing revive-everyone paths bring them back at the next level or life.
+     */
+    private holdSeat(seat: HostSeat): void {
+        seat.connected = false;
+        seat.input.clearHeld();
+        this.options.onSeatConnectionChange?.(seat.playerId, false);
+        if (seat.releaseTimer !== null) clearTimeout(seat.releaseTimer);
+        seat.releaseTimer = setTimeout(() => {
+            this.seats.delete(seat.clientId);
+            this.publishRoster();
+        }, RECONNECT_GRACE_MS);
+        this.publishRoster();
+    }
+
+    /** Someone is back — through a new connection, or just by speaking again. */
+    private restoreSeat(seat: HostSeat, peerId: string): void {
+        seat.peerId = peerId;
+        seat.connected = true;
+        if (seat.releaseTimer !== null) {
+            clearTimeout(seat.releaseTimer);
+            seat.releaseTimer = null;
+        }
+        this.options.onSeatConnectionChange?.(seat.playerId, true);
+        this.publishRoster();
     }
 
     private handle(msg: ClientMessage, peerId: string): void {
         switch (msg.t) {
             case 'hello':
-                this.admit(msg.protocol, msg.name, peerId);
+                this.admit(msg, peerId);
                 break;
             case 'input': {
-                // No game is running in the lobby, so this only matters once
-                // Phase 3 seats these inputs — but a seat that has not been
-                // handed to the simulation yet can still track its sequence.
-                this.seats.get(peerId)?.input.receive(msg);
+                const seat = this.seatByPeer(peerId);
+                if (seat === undefined) break;
+                // They were only quiet, not gone. Talking again is enough.
+                if (!seat.connected) this.restoreSeat(seat, peerId);
+                seat.input.receive(msg);
                 break;
             }
-            case 'leave':
-                if (this.seats.delete(peerId)) this.publishRoster();
+            case 'leave': {
+                // Leaving is deliberate, so the seat goes now rather than being
+                // held the way a dropped connection is.
+                const seat = this.seatByPeer(peerId);
+                if (seat === undefined) break;
+                if (seat.releaseTimer !== null) clearTimeout(seat.releaseTimer);
+                this.seats.delete(seat.clientId);
+                this.options.onSeatConnectionChange?.(seat.playerId, false);
+                this.publishRoster();
                 break;
+            }
         }
     }
 
-    private admit(protocol: unknown, name: string, peerId: string): void {
-        const existing = this.seats.get(peerId);
+    private admit(hello: { protocol: unknown; name: string; clientId?: string }, peerId: string): void {
+        const clientId = typeof hello.clientId === 'string' && hello.clientId.length > 0
+            ? hello.clientId
+            : peerId;
+
+        const existing = this.seats.get(clientId);
         if (existing !== undefined) {
-            // A duplicate hello — the joiner retried. Re-welcome rather than
-            // seating them twice.
+            // Either a duplicate hello from a joiner that retried, or someone
+            // coming back to a seat that was held for them. Both are the same
+            // thing: re-welcome, do not seat them twice.
+            if (existing.connected) existing.peerId = peerId;
+            else this.restoreSeat(existing, peerId);
             this.welcome(existing, peerId);
             return;
         }
 
+        const protocol = hello.protocol;
+        const name = hello.name;
         const playerId = this.nextPlayerId();
         const reason = this.refusalFor(protocol, playerId);
         if (reason !== null || playerId === null) {
@@ -161,10 +258,13 @@ export class NetHost {
         const seat: HostSeat = {
             playerId,
             peerId,
+            clientId,
             name: sanitizeName(name),
             input: new RemotePlayerInput(),
+            connected: true,
+            releaseTimer: null,
         };
-        this.seats.set(peerId, seat);
+        this.seats.set(clientId, seat);
         this.welcome(seat, peerId);
         this.publishRoster();
     }
@@ -192,7 +292,8 @@ export class NetHost {
             playerId: seat.playerId,
             level: this.level,
             roster: this.roster(),
-            state: null,
+            // A returning player needs the running game, not an empty lobby.
+            state: this.options.latestSnapshot?.() ?? null,
         }, peerId);
     }
 

@@ -145,6 +145,30 @@ function drawButton(
 }
 
 /**
+ * Drawn over the maze when snapshots stop arriving — a host who backgrounded
+ * their tab, a lag spike, or a connection going bad. Without it the game simply
+ * freezes and looks broken.
+ */
+export function drawWaitingBanner(): void {
+    const ctx = gameState.ctx;
+    const w = gameState.canvas.width;
+    const y = unit * 17;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(0, y - unit * 1.6, w, unit * 3.2);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'yellow';
+    ctx.font = `bold ${Math.round(unit * 0.9)}px monospace`;
+    ctx.fillText('WAITING FOR THE HOST...', w / 2, y - unit * 0.4);
+
+    ctx.fillStyle = '#888';
+    ctx.font = `${Math.round(unit * 0.55)}px monospace`;
+    ctx.fillText('ESC OR B TO LEAVE', w / 2, y + unit * 0.9);
+}
+
+/**
  * What a client sees once the host's game is over.
  *
  * The status line is the point. Without it, a client watching the host type

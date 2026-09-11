@@ -2,7 +2,7 @@ import type { LevelData } from '../types';
 import { migrateLevel } from '../editor/LevelMigrate';
 import type { Direction } from '../types';
 import type { ClientMessage, HostMessage, PeerInfo, RejectReason, Snapshot } from './Protocol';
-import { PROTOCOL_VERSION, decodeMessage, encodeMessage, isLobbyCode } from './Protocol';
+import { PROTOCOL_VERSION, decodeMessage, encodeMessage, isLobbyCode, localClientId } from './Protocol';
 import type { Transport, TransportFactory } from './Transport';
 import { trysteroTransport } from './Transport';
 
@@ -11,8 +11,12 @@ export type JoinFailure = RejectReason | 'timeout' | 'bad-code' | 'host-left';
 export interface NetClientOptions {
     code: string;
     name: string;
-    /** The host welcomed us — the level and our player id are settled. */
-    onWelcome: (playerId: number, level: LevelData) => void;
+    /**
+     * The host welcomed us — the level and our player id are settled. `state`
+     * is set when a game is already running, which is what a player coming back
+     * to a held seat gets.
+     */
+    onWelcome: (playerId: number, level: LevelData, state: Snapshot | null) => void;
     onRosterChange: (roster: PeerInfo[]) => void;
     /** The host pressed START. The level comes with it — it may have changed. */
     onStart: (level: LevelData) => void;
@@ -68,7 +72,12 @@ export class NetClient {
         // other clients ignore it. Greeting each arrival covers both orders:
         // joining an existing lobby, and being first in with the host to come.
         this.transport.onPeerJoin = (peerId) => {
-            this.sendTo({ t: 'hello', protocol: PROTOCOL_VERSION, name: options.name }, peerId);
+            this.sendTo({
+                t: 'hello',
+                protocol: PROTOCOL_VERSION,
+                name: options.name,
+                clientId: localClientId(),
+            }, peerId);
         };
 
         this.transport.onPeerLeave = (peerId) => {
@@ -79,14 +88,16 @@ export class NetClient {
     }
 
     /**
-     * Send what the local player is asking for. The sequence number is assigned
-     * here and echoed back in `Snapshot.ack`, which is what lets the host's
-     * seat drop anything that arrives late or twice.
+     * Send what the local player is asking for, and return the sequence number
+     * it went out with. The host echoes it back in `Snapshot.ack`, which is
+     * what lets a seat drop anything late or duplicated — and what lets the
+     * client line a snapshot up against what it predicted at the time.
      */
-    sendInput(held: number, buffered: Direction | null): void {
-        if (this.closed || this.hostPeerId === null) return;
+    sendInput(held: number, buffered: Direction | null): number {
+        if (this.closed || this.hostPeerId === null) return this.seq;
         this.seq++;
         this.sendTo({ t: 'input', held, buffered, seq: this.seq }, this.hostPeerId);
+        return this.seq;
     }
 
     leave(): void {
@@ -111,7 +122,7 @@ export class NetClient {
                 // already been refused by then.
                 this.level = migrateLevel(msg.level);
                 this.roster = msg.roster;
-                this.options.onWelcome(this.playerId, this.level);
+                this.options.onWelcome(this.playerId, this.level, msg.state);
                 this.options.onRosterChange(this.roster);
                 break;
             }

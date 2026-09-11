@@ -114,7 +114,8 @@ and GitHub Pages users hold stale tabs for a long time. Mismatches must be
 refused with a "reload the page" message rather than half-working.
 
 Bump `PROTOCOL_VERSION` whenever `LevelData`, the snapshot format or the input
-format changes.
+format changes. It is at **2**: the handshake gained `clientId`, which is what
+a held seat is keyed by.
 
 ### Client → host: input
 
@@ -202,10 +203,13 @@ snapshot, so clients can run it unchanged.
 
 | Event | Behaviour |
 |---|---|
-| Client drops | `active = false`, slot held 30 s for reconnect, freed at level clear |
-| Client returns within 30 s | Re-seated into the same slot, full state resent |
+| Client goes quiet for 1 s | Held directions released — otherwise they run at a wall |
+| Client goes quiet for 8 s | Seat held, player sat out. WebRTC needs 12 s+ to notice a closed tab |
+| Client drops | Seat held 30 s, keyed by a `clientId` in localStorage |
+| Client returns within 30 s | Same slot, and the running game arrives in the `welcome`. They sit out until the next level or life, like any player who was not there |
 | Host drops | Everyone returns to the menu — there is no host migration |
-| Tab backgrounded | `rAF` stops and the snapshot buffer starves; pause on `visibilitychange` |
+| Host goes quiet | Clients say so over the frozen maze and stop predicting |
+| Tab backgrounded | Controls released on the way out, snapshot backlog dropped on the way back |
 
 ### The room outlives the game
 
@@ -282,7 +286,7 @@ resolution-dependent drift.
 | `src/net/RemotePlayerInput.ts` | `PlayerInput` fed from the wire |
 | `src/net/InputSampler.ts` | Reads the local player on a machine that runs no simulation |
 | `src/net/NetEvents.ts` | What the host did that a client cannot derive: sounds, and eaten tiles |
-| `src/net/ClientGame.ts` | Render-only world: build it, write snapshots onto it, draw |
+| `src/net/ClientGame.ts` | Render-only world: build it, write snapshots onto it, interpolate, predict, draw |
 | `src/net/LobbyScreen.ts` | Host and join screens, code entry, roster |
 
 ### Files to change
@@ -293,6 +297,7 @@ resolution-dependent drift.
 | `src/input/KeyboardPlayerInput.ts`, `GamepadPlayerInput.ts`, `TouchPlayerInput.ts` | Use the helper |
 | `src/Game.ts` | Menu entries for host/join; net hooks in `start`, `update`, `initializeLevel` |
 | `src/static/Sound.ts` | Nothing structural — clients call it from `NetEvent`s |
+| `src/static/Speeds.ts` | The speed table, moved out of `Game.ts` so a predicting client can use it |
 
 The shared-helper extraction comes first. The buffer-retry block was already
 copied across `KeyboardPlayerInput`, `GamepadPlayerInput` and
@@ -432,13 +437,52 @@ game starts. Local play was re-checked offline and is untouched.
 It feels floaty, as predicted — the local player lags a full round trip — and
 remote motion is visibly steppy at 20 Hz. Both are Phase 4's problem.
 
-### Phase 4 — Feel
+### Phase 4 — Feel ✅
 
-- Interpolation: buffer two snapshots, render ~100 ms behind.
-- Client-side prediction for the local player only — run `Move.player` locally,
-  reconcile against `ack`, snap when divergence exceeds one tile.
-- Disconnect, reconnect, host-left handling.
-- `visibilitychange` pause.
+- **Interpolation.** The client draws 100 ms behind the newest snapshot,
+  blending positions between the two that straddle that moment. Discrete state
+  — score, modes, eaten dots, sounds — is applied as its snapshot comes into
+  view rather than as it arrives, so a dot sounds at the moment it visibly
+  goes. A tunnel wrap is a teleport, not a movement, so a jump over eight tiles
+  is taken whole instead of sliding back across the maze.
+- **Prediction.** The local player is driven by a `RemotePlayerInput` fed the
+  same messages the host is sent, so prediction and authority interpret a
+  buffered turn through identical code. It runs `Move.player` locally against
+  the real maze, and the speed table moved to `src/static/Speeds.ts` so both
+  sides compute the same number from what a snapshot already carries.
+- **Reconciliation** compares the host's position against where the prediction
+  *was* when the acknowledged input went out, not against where it is now —
+  those are a round trip apart. Past a tile it shifts by the error rather than
+  jumping to the host's position, which would undo every step since; past four
+  tiles (a death, a teleport, a new level) it gives up and snaps.
+- **Presence beats WebRTC.** A closed tab takes WebRTC twelve seconds or more
+  to report, which is far too long to leave someone standing in a maze full of
+  enemies. Silence is the faster signal: a second without input lets go of
+  their controls, eight seconds holds their seat and sits them out. Seats are
+  held for 30 s and keyed by a `clientId` in localStorage, so a player who
+  reloads lands back in the same slot and gets the running game in their
+  `welcome` — straight into the maze, no lobby in between.
+- **Sitting out is the existing mechanic.** A player who drops is sat out
+  exactly as a dead one is, and the revive paths bring them back at the next
+  level or life. Those paths now skip anyone still absent: reviving an empty
+  chair feeds the shared life pool to nobody.
+- **A hidden tab** lets go of its controls on the way out, so nobody's avatar
+  keeps running while they are away, and throws away the backlog on the way
+  back instead of replaying it in fast forward.
+- **When the host goes quiet** — a lag spike, a backgrounded tab — clients say
+  so over the frozen maze rather than looking broken, and stop predicting into
+  a world nobody is correcting.
+
+**Verified** in two browsers: the local player answers its own keyboard in
+under 120 ms where a round trip plus interpolation would be 150; enemies move
+on more than 70% of frames rather than every third; a closed tab is sat out in
+seconds rather than on WebRTC's schedule; a reload lands back in the running
+game; and a 3.5-second stall on the host raises the waiting banner and clears
+it when the host recovers.
+
+**Not done:** automatic reconnection. A dropped client does not retry by
+itself — the player rejoins by entering the code again, and the seat is waiting
+for them.
 
 ### Phase 5 — Custom levels
 
@@ -515,10 +559,12 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 | Lobby screens and code entry | ✅ Complete |
 | Snapshot broadcast and apply | ✅ Complete |
 | Event-driven client audio | ✅ Complete |
-| Interpolation | ⬜ Planned |
-| Client-side prediction | ⬜ Planned |
-| Disconnect / reconnect / host-left | ⬜ Planned |
+| Interpolation | ✅ Complete — 100 ms behind |
+| Client-side prediction | ✅ Complete — for the local player only |
+| Disconnect / reconnect / host-left | ✅ Complete — manual rejoin, seat held 30 s |
 | Client game-over screen with host status | ✅ Complete |
+| Waiting banner when the host goes quiet | ✅ Complete |
+| Automatic reconnection (client retries by itself) | ⬜ Planned — the seat is held; rejoining is manual |
 | Room survives game over, host restarts from the lobby | ✅ Complete |
 | Host picks a library level before hosting | ⬜ Planned |
 | Mid-level joining | ⬜ Planned — after Phase 5; next-level joining ships first |
