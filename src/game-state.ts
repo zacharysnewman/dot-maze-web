@@ -46,6 +46,12 @@ export const gameState = {
      * mid-game.
      */
     onlineCode: null as string | null,
+    /**
+     * Which player is the one at this keyboard, during an online game. Null
+     * offline, where every player on screen is local and marking them all
+     * would say nothing.
+     */
+    onlinePlayerId: null as number | null,
     // Debug overlay (enabled via ?dev=true)
     debugEnabled: false,
     debugShowTargetTiles: false,

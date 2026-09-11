@@ -1184,8 +1184,11 @@ function start(slots: ConfirmedSlot[], level?: LevelData): void {
     Sound.stopMenuMusic();
     menuMusicPlaying = false;
 
-    // Online games carry their lobby code into the HUD; local ones show nothing.
-    gameState.onlineCode = netHost !== null && hostPhase !== 'lobby' ? netHost.code : null;
+    // Online games carry their lobby code into the HUD, and mark which player
+    // is the one at this keyboard; local ones show neither.
+    const hosting = netHost !== null && hostPhase !== 'lobby';
+    gameState.onlineCode = hosting ? netHost?.code ?? null : null;
+    gameState.onlinePlayerId = hosting ? 1 : null;
 
     gameStarted = true;
     Time.setup();
@@ -1688,6 +1691,7 @@ function leaveLobby(): void {
 
 function closeOnlineSession(): void {
     gameState.onlineCode = null;
+    gameState.onlinePlayerId = null;
     netHost?.close();
     netHost = null;
     netClient?.leave();
@@ -1719,6 +1723,7 @@ function startClientGame(level: LevelData, state: Snapshot | null = null): void 
 
     clientGame = new ClientGame(level, netClient.playerId, state?.level ?? 1);
     gameState.onlineCode = netClient.code;
+    gameState.onlinePlayerId = netClient.playerId;
     clientPhase = 'playing';
     clientConnection = 'connected';
     clientRunning = true;
@@ -1813,6 +1818,7 @@ function onClientTouch(e: TouchEvent): void {
 function stopClientGame(): void {
     clientRunning = false;
     gameState.onlineCode = null;
+    gameState.onlinePlayerId = null;
     clientPhase = 'lobby';
     clientInput?.destroy();
     clientInput = null;

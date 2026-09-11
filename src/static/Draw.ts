@@ -106,6 +106,18 @@ export class Draw {
 
         // Draw player prop (P1=none, P2=backpack, P3=bow, P4=tic-tac pill)
         Draw.playerProp(obj, player.id);
+
+        // Mark the player at this keyboard. The props say which slot each
+        // character is, but only the lobby ever said which slot is yours — and
+        // P1's prop is the absence of one, which you can identify only by
+        // elimination. Cyan to match the lobby's YOU.
+        if (player.id === gameState.onlinePlayerId) {
+            ctx.fillStyle = 'cyan';
+            ctx.font = `bold ${Math.round(unit * 0.85)}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('\u25BC', x, y - size - unit * 0.5);
+        }
     }
 
     private static playerDeathAnim(obj: IGameObject, player: PlayerState): void {
