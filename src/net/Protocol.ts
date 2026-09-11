@@ -10,7 +10,7 @@ import type { Direction, EnemyMode, LevelData } from '../types';
  * be refused at the handshake rather than half-working. GitHub Pages users hold
  * stale tabs for a long time, so this will happen.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Seats in a room, host included. */
 export const MAX_PLAYERS = 4;
@@ -133,11 +133,18 @@ export type HostPhase = 'playing' | 'gameover' | 'initials' | 'lobby';
 export type NetEvent =
     | { e: 'dot' }
     | { e: 'power' }
-    | { e: 'fruit' }
-    | { e: 'eatEnemy'; chain: number }
+    // Scored events carry where and how much, because the floating number the
+    // host draws on the spot is not in the snapshot — and cannot be, since its
+    // expiry is a time on the host's clock.
+    | { e: 'fruit'; score: number; x: number; y: number }
+    | { e: 'eatEnemy'; chain: number; score: number; x: number; y: number }
     | { e: 'death'; playerId: number }
     | { e: 'levelClear' }
     | { e: 'extraLife' };
+
+/** How long a floating score stays up. Both sides count it on their own clock. */
+export const ENEMY_POPUP_SECONDS = 1.0;
+export const FRUIT_POPUP_SECONDS = 2.0;
 
 export interface PeerInfo {
     playerId: number;

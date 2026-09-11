@@ -7,11 +7,12 @@ import { Move } from '../static/Move';
 import { Sound } from '../static/Sound';
 import { getCurrentPlayerSpeed } from '../static/Speeds';
 import { Stats } from '../static/Stats';
-import type { IGameObject, LevelData, PlayerState } from '../types';
+import { Time } from '../static/Time';
+import type { Direction, IGameObject, LevelData, PlayerState } from '../types';
 import { RemotePlayerInput } from './RemotePlayerInput';
 import type { InputMsg, NetEvent, Snapshot, SnapshotPlayer } from './Protocol';
-import { tileFromIndex } from './Protocol';
-import { TILE_EMPTY } from '../tiles';
+import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, tileFromIndex } from './Protocol';
+import { TILE_DOT, TILE_EMPTY, TILE_POWER } from '../tiles';
 
 const ENEMY_COLORS = ['red', 'cyan', 'hotpink', 'orange'] as const;
 
@@ -31,9 +32,27 @@ const INTERP_DELAY_MS = 100;
 /** Silence longer than this means the host has stopped sending. */
 const STARVED_MS = 1500;
 
-/** Divergence worth correcting, and divergence worth giving up on. */
-const CORRECT_ABOVE = unit;          // one tile — a wrong turn
-const SNAP_ABOVE    = unit * 4;      // a teleport, a death, a new level
+/**
+ * Divergence worth giving up the prediction for — a wrong turn, a teleport, a
+ * death. Below it the prediction is left alone.
+ *
+ * There is no gentler correction below this threshold on purpose. A snapshot's
+ * position is the host's from a moment the client cannot pin down exactly, so
+ * small measured differences are as likely to be measurement as drift, and
+ * nudging the player toward them fights the prediction instead of helping it.
+ * A snap is also the only correction that cannot put the player inside a wall,
+ * because a host position is always a position the host could stand in.
+ */
+const SNAP_ABOVE = unit * 1.5;
+
+/**
+ * The host stalls a player for a frame on a dot and 50 ms on a power pellet.
+ * The client has to stall too or its prediction gains a frame per dot — a
+ * corridor's worth adds up to whole tiles, all in the same direction, which is
+ * what rubber-banding is made of.
+ */
+const DOT_STALL_SECONDS = 1 / 60;
+const POWER_STALL_SECONDS = 0.05;
 
 interface Buffered {
     snap: Snapshot;
@@ -68,6 +87,8 @@ export class ClientGame {
     private readonly localInput = new RemotePlayerInput();
     /** Where the prediction thought it was when each input went out. */
     private readonly predicted = new Map<number, { x: number; y: number }>();
+    /** While this is in the future the predicted player is mid-bite, as on the host. */
+    private stallUntil = 0;
 
     /**
      * `startLevel` is the level number the first snapshot will carry. Starting
@@ -138,6 +159,18 @@ export class ClientGame {
         this.predicted.set(message.seq, { x: actorX, y: actorY });
     }
 
+    /**
+     * The predicted player entered a tile. If this client's copy of the grid
+     * still shows something to eat there, the host is about to stall on it, so
+     * stall too. The grid itself is not touched — which tiles are gone is the
+     * host's to say, and it says so in every snapshot.
+     */
+    private predictedTileEntered(x: number, y: number): void {
+        const tile = Levels.levelDynamic[y]?.[x];
+        if (tile === TILE_DOT) this.stallUntil = Time.timeSinceStart + DOT_STALL_SECONDS;
+        else if (tile === TILE_POWER) this.stallUntil = Time.timeSinceStart + POWER_STALL_SECONDS;
+    }
+
     /** The local player's actor, so the caller can record where it predicted. */
     selfActor(): IGameObject | null {
         return gameState.players.find(p => p.id === this.selfPlayerId)?.actor ?? null;
@@ -165,7 +198,7 @@ export class ClientGame {
         // predicting would just walk the player off into a maze nobody else
         // can see.
         const predicting = self !== null && self.active && !self.dying
-            && !gameState.frozen && !this.isStarved();
+            && !gameState.frozen && !this.isStarved() && !gameState.debugDisablePrediction;
 
         const next = this.buffer[0] ?? null;
         const span = next === null ? 0 : next.at - this.base.at;
@@ -173,7 +206,7 @@ export class ClientGame {
         writePositions(this.base.snap, next?.snap ?? null, t, predicting ? this.selfPlayerId : null);
 
         if (predicting && self !== null) {
-            self.actor.moveSpeed = getCurrentPlayerSpeed();
+            self.actor.moveSpeed = Time.timeSinceStart < this.stallUntil ? 0 : getCurrentPlayerSpeed();
             this.localInput.update(self.actor);
             Move.player(self);
         }
@@ -290,7 +323,7 @@ export class ClientGame {
         // Sitting out, dying, or frozen: the host's position is the only one
         // that means anything.
         if (!authority.active || authority.dying || snap.frozen) {
-            snapTo(self, authority);
+            this.giveUpPrediction(self, authority);
             return;
         }
         if (at === undefined) return;
@@ -298,13 +331,23 @@ export class ClientGame {
         const dx = authority.x - at.x;
         const dy = authority.y - at.y;
         if (Math.abs(dx) > SNAP_ABOVE || Math.abs(dy) > SNAP_ABOVE) {
-            snapTo(self, authority);
-        } else if (Math.abs(dx) > CORRECT_ABOVE || Math.abs(dy) > CORRECT_ABOVE) {
-            // Shift by the error rather than jumping to the host's position,
-            // which would undo every step taken since that input went out.
-            self.actor.x += dx;
-            self.actor.y += dy;
+            this.giveUpPrediction(self, authority);
         }
+    }
+
+    /**
+     * Take the host's position and forget what was predicted.
+     *
+     * Clearing the history matters as much as the snap: every input still in
+     * flight was recorded against a position that no longer exists, and
+     * comparing the next snapshot against one of those would measure the same
+     * divergence again and snap again — once per snapshot until the history
+     * drained, which reads as the player bouncing.
+     */
+    private giveUpPrediction(self: PlayerState, authority: SnapshotPlayer): void {
+        snapTo(self, authority);
+        this.predicted.clear();
+        this.stallUntil = 0;
     }
 
     /**
@@ -317,7 +360,11 @@ export class ClientGame {
             && ids.every((id, i) => gameState.players[i].id === id);
         if (unchanged) return;
 
-        gameState.players = ids.map(id => makeRenderOnlyPlayer(id, this.playerStart));
+        gameState.players = ids.map(id => makeRenderOnlyPlayer(
+            id,
+            this.playerStart,
+            id === this.selfPlayerId ? (x, y) => this.predictedTileEntered(x, y) : undefined,
+        ));
         // Player actors first, so enemies draw over them — the same order the
         // host builds, because the client draws the same list.
         gameState.gameObjects = [...gameState.players.map(p => p.actor), ...gameState.enemies];
@@ -336,17 +383,71 @@ function writePositions(a: Snapshot, b: Snapshot | null, t = 1, skipId: number |
         const from = a.players.find(p => p.id === player.id);
         if (from === undefined) continue;
         const to = b?.players.find(p => p.id === player.id) ?? null;
-        player.actor.x = blend(from.x, to?.x, t);
-        player.actor.y = blend(from.y, to?.y, t);
-        player.actor.moveDir = (to ?? from).dir;
+        placeBetween(player.actor, from, to, t);
     }
 
     for (let i = 0; i < gameState.enemies.length && i < a.enemies.length; i++) {
         const from = a.enemies[i];
         const to = b === null ? null : b.enemies[i] ?? null;
-        gameState.enemies[i].x = blend(from.x, to?.x, t);
-        gameState.enemies[i].y = blend(from.y, to?.y, t);
-        gameState.enemies[i].moveDir = (to ?? from).dir;
+        placeBetween(gameState.enemies[i], from, to, t);
+    }
+}
+
+interface Placed { x: number; y: number; dir: Direction }
+
+/**
+ * Put an actor between two snapshots.
+ *
+ * Corridors meet at right angles, so a straight line between two positions on
+ * either side of a corner cuts diagonally through the wall between them.
+ * Follow the corner instead: along the direction it was travelling first, then
+ * the rest on the other axis.
+ */
+function placeBetween(actor: IGameObject, from: Placed, to: Placed | null, t: number): void {
+    actor.moveDir = (to ?? from).dir;
+
+    if (to === null) {
+        actor.x = from.x;
+        actor.y = from.y;
+        return;
+    }
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+
+    // A wrap is a teleport, not a movement; taking it whole beats sliding the
+    // actor back across the maze.
+    if (Math.abs(dx) > TELEPORT_GAP || Math.abs(dy) > TELEPORT_GAP) {
+        const target = t < 1 ? from : to;
+        actor.x = target.x;
+        actor.y = target.y;
+        return;
+    }
+
+    const straight = dx === 0 || dy === 0;
+    if (straight) {
+        actor.x = from.x + dx * t;
+        actor.y = from.y + dy * t;
+        return;
+    }
+
+    // Two axes changed, so a corner was turned between these snapshots. The
+    // corner itself is where the old direction ran out.
+    const wasHorizontal = from.dir === 'left' || from.dir === 'right';
+    const corner = wasHorizontal ? { x: to.x, y: from.y } : { x: from.x, y: to.y };
+    const first = Math.abs(wasHorizontal ? dx : dy);
+    const total = first + Math.abs(wasHorizontal ? dy : dx);
+    const travelled = total * t;
+
+    if (travelled <= first) {
+        const leg = first === 0 ? 1 : travelled / first;
+        actor.x = from.x + (corner.x - from.x) * leg;
+        actor.y = from.y + (corner.y - from.y) * leg;
+    } else {
+        const rest = total - first;
+        const leg = rest === 0 ? 1 : (travelled - first) / rest;
+        actor.x = corner.x + (to.x - corner.x) * leg;
+        actor.y = corner.y + (to.y - corner.y) * leg;
     }
 }
 
@@ -355,12 +456,6 @@ function writePositions(a: Snapshot, b: Snapshot | null, t = 1, skipId: number |
  * the actor back across the whole maze. Anything that big is taken whole.
  */
 const TELEPORT_GAP = unit * 8;
-
-function blend(from: number, to: number | undefined, t: number): number {
-    if (to === undefined) return from;
-    if (Math.abs(to - from) > TELEPORT_GAP) return t < 1 ? from : to;
-    return from + (to - from) * t;
-}
 
 function clamp01(value: number): number {
     return value < 0 ? 0 : value > 1 ? 1 : value;
@@ -376,22 +471,42 @@ function playEvent(event: NetEvent): void {
     switch (event.e) {
         case 'dot':        Sound.dot();        break;
         case 'power':      Sound.energizer();  break;
-        case 'eatEnemy':   Sound.enemyEaten(); break;
         case 'death':      Sound.death();      break;
         case 'levelClear': Sound.levelClear(); break;
-        // The fruit and the extra life are scored, not sounded, on the host.
+        case 'eatEnemy':
+            Sound.enemyEaten();
+            showScorePopup(event.x, event.y, event.score, ENEMY_POPUP_SECONDS);
+            break;
         case 'fruit':
+            // Scored, not sounded, on the host.
+            showScorePopup(event.x, event.y, event.score, FRUIT_POPUP_SECONDS);
+            break;
         case 'extraLife':  break;
     }
 }
 
-function makeRenderOnlyPlayer(id: number, start: { x: number; y: number }): PlayerState {
+/**
+ * The floating number over an eaten enemy or fruit. It cannot ride in the
+ * snapshot: its expiry is a time on the host's clock, which means nothing here.
+ * The event says where and how much, and the client times it out itself.
+ */
+function showScorePopup(x: number, y: number, score: number, seconds: number): void {
+    gameState.scorePopups.push({ x, y, score, endTime: Time.timeSinceStart + seconds });
+}
+
+function makeRenderOnlyPlayer(
+    id: number,
+    start: { x: number; y: number },
+    onTileEntered?: (x: number, y: number) => void,
+): PlayerState {
     let player!: PlayerState;
     const actor = new GameObject(
         'yellow', start.x, start.y, 0.667,
         () => {},                       // the host moves this one
         (obj) => Draw.player(obj, player),
-        () => {},                       // eaten dots arrive in snapshots
+        // Which dots are gone arrives in snapshots; the only reason the
+        // predicted player watches its own tiles is to stall on them.
+        (x, y) => onTileEntered?.(x, y),
         () => {},
     );
     player = {

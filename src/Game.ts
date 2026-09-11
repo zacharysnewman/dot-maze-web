@@ -40,7 +40,7 @@ import { InputSampler } from './net/InputSampler';
 import { ClientGame } from './net/ClientGame';
 import type { ConnectionState } from './net/NetClient';
 import type { HostPhase, Snapshot } from './net/Protocol';
-import { SNAPSHOT_HZ, tileIndex } from './net/Protocol';
+import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, SNAPSHOT_HZ, tileIndex } from './net/Protocol';
 
 
 // Enemy eye-return speed (constant regardless of level)
@@ -79,9 +79,9 @@ function checkFruitCollision(): void {
         if (player.active && Math.abs(player.actor.x - fx) < unit && Math.abs(player.actor.y - fy) < unit) {
             const score = getFruitPoints(gameState.level);
             Stats.addToScore(score);
-            gameState.scorePopups.push({ x: fx, y: fy, score, endTime: Time.timeSinceStart + 2.0 });
+            gameState.scorePopups.push({ x: fx, y: fy, score, endTime: Time.timeSinceStart + FRUIT_POPUP_SECONDS });
             gameState.fruitActive = null;
-            NetEvents.record({ e: 'fruit' });
+            NetEvents.record({ e: 'fruit', score, x: fx, y: fy });
             break;
         }
     }
@@ -325,7 +325,7 @@ function eatEnemy(enemy: IGameObject, player: PlayerState): void {
         x: enemy.x,
         y: enemy.y,
         score,
-        endTime: Time.timeSinceStart + 1.0,
+        endTime: Time.timeSinceStart + ENEMY_POPUP_SECONDS,
     });
 
     // Freeze this player briefly while score is shown
@@ -333,7 +333,13 @@ function eatEnemy(enemy: IGameObject, player: PlayerState): void {
     Time.addTimer(0.5, () => { player.frozen = false; });
 
     Sound.enemyEaten();
-    NetEvents.record({ e: 'eatEnemy', chain: gameState.enemyEatenChain });
+    NetEvents.record({
+        e: 'eatEnemy',
+        chain: gameState.enemyEatenChain,
+        score,
+        x: enemy.x,
+        y: enemy.y,
+    });
 
     // Enemy becomes eyes and speeds home
     enemy.enemyMode = 'eyes';
@@ -1512,6 +1518,12 @@ function joinFailureText(failure: JoinFailure): string {
 
 function enterLobby(): void {
     lobbyRunning = true;
+    // The lobby is a menu screen and should sound like one, whether it is the
+    // first one or the one a finished game came back to.
+    if (audioUnlocked && !menuMusicPlaying) {
+        Sound.playMenuMusic();
+        menuMusicPlaying = true;
+    }
     document.onkeydown = (e: KeyboardEvent) => {
         if (e.key === 'Escape') leaveLobby();
         else if (e.key === 'Enter' || e.key === ' ') hostStartGame();
@@ -1716,6 +1728,15 @@ function startClientGame(level: LevelData, state: Snapshot | null = null): void 
     if (netClient === null) return;
     if (clientRunning) stopClientGame();
     exitLobbyScreen();
+
+    // The host's own `start()` does both of these for the host, and a client
+    // never goes through it: without the first the menu music plays over the
+    // whole game, and without the second the game begins in silence while the
+    // host hears it start. A player rejoining a game already in progress gets
+    // no chimes — the game did not begin, they arrived.
+    Sound.stopMenuMusic();
+    menuMusicPlaying = false;
+    if (state === null) Sound.introChimes();
 
     const inputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
     if (GamepadPlayerInput.connectedIndices().includes(0)) inputs.push(new GamepadPlayerInput(0));
@@ -2193,6 +2214,7 @@ window.onload = function () {
                 <label><input type="checkbox" id="dbg-redzones"> Red zones</label>
                 <label><input type="checkbox" id="dbg-enemypaths"> Enemy paths</label>
                 <label><input type="checkbox" id="dbg-tilepicker"> Tile picker</label>
+                <label><input type="checkbox" id="dbg-no-predict"> Online: no prediction</label>
                 <label style="flex-direction:column;align-items:flex-start;gap:10px">
                     <span id="dbg-extra-players-label">Extra players: 0</span>
                     <input type="range" id="dbg-extra-players" min="0" max="3" value="0"
@@ -2233,6 +2255,11 @@ window.onload = function () {
         (document.getElementById('dbg-tilepicker') as HTMLInputElement).onchange = (e) => {
             gameState.debugTilePicker = (e.target as HTMLInputElement).checked;
             if (!gameState.debugTilePicker) gameState.debugSelectedTile = null;
+        };
+        (document.getElementById('dbg-no-predict') as HTMLInputElement).onchange = (e) => {
+            // Draws your own player from snapshots like everyone else. If a
+            // movement problem survives this, it is the host's, not prediction.
+            gameState.debugDisablePrediction = (e.target as HTMLInputElement).checked;
         };
         const extraPlayersSlider = document.getElementById('dbg-extra-players') as HTMLInputElement;
         const extraPlayersLabel  = document.getElementById('dbg-extra-players-label') as HTMLSpanElement;

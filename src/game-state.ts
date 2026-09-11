@@ -64,5 +64,8 @@ export const gameState = {
     debugShowRedZones: false,
     debugShowEnemyPaths: false,
     debugTilePicker: false,
+    /** Draw the local player from snapshots like everyone else, to see whether
+     *  a movement problem is the prediction's or the host's. */
+    debugDisablePrediction: false,
     debugSelectedTile: null as { x: number; y: number } | null,
 };

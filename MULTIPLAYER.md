@@ -114,8 +114,9 @@ and GitHub Pages users hold stale tabs for a long time. Mismatches must be
 refused with a "reload the page" message rather than half-working.
 
 Bump `PROTOCOL_VERSION` whenever `LevelData`, the snapshot format or the input
-format changes. It is at **2**: the handshake gained `clientId`, which is what
-a held seat is keyed by.
+format changes. It is at **3**: the handshake gained `clientId`, which is what
+a held seat is keyed by, and the scored events gained a position and an amount,
+which is what a client draws a floating score from.
 
 ### Client → host: input
 
@@ -190,7 +191,7 @@ data:
 ```ts
 type NetEvent =
     | { e: 'dot' } | { e: 'power' } | { e: 'fruit' }
-    | { e: 'eatEnemy'; chain: number }
+    | { e: 'eatEnemy'; chain: number; score: number; x: number; y: number }
     | { e: 'death'; playerId: number }
     | { e: 'levelClear' } | { e: 'extraLife' };
 ```
@@ -198,6 +199,12 @@ type NetEvent =
 The ambient siren is derived, not sent: `updateAmbientSiren` already picks the
 siren from enemy modes and `frightenedRemaining`, both of which are in every
 snapshot, so clients can run it unchanged.
+
+The scored events carry a position and an amount because the floating number
+the host draws over an eaten enemy or fruit is not in the snapshot, and cannot
+be: `scorePopups` expires on a time from the host's clock, which means nothing
+on another machine. The event says where and how much; each client times its
+own out.
 
 ### Disconnects
 
@@ -454,9 +461,9 @@ remote motion is visibly steppy at 20 Hz. Both are Phase 4's problem.
   sides compute the same number from what a snapshot already carries.
 - **Reconciliation** compares the host's position against where the prediction
   *was* when the acknowledged input went out, not against where it is now —
-  those are a round trip apart. Past a tile it shifts by the error rather than
-  jumping to the host's position, which would undo every step since; past four
-  tiles (a death, a teleport, a new level) it gives up and snaps.
+  those are a round trip apart. Past a tile and a half it gives up: it takes
+  the host's position and forgets what it had predicted. There is deliberately
+  no gentler correction below that — see below.
 - **Presence beats WebRTC.** A closed tab takes WebRTC twelve seconds or more
   to report, which is far too long to leave someone standing in a maze full of
   enemies. Silence is the faster signal: a second without input lets go of
@@ -544,6 +551,73 @@ leaves the client trying, and on the menu once the window runs out.
 
 ---
 
+## Planned: couch co-op, and eight players
+
+The phases above are built and playable. These three are not started.
+
+Today an online game seats exactly one player per machine: `hostStartGame`
+builds one local slot and one per remote seat. Two people on a sofa cannot join
+a friend together, and nothing about that is a small switch — it is the one
+assumption the whole net layer is built on.
+
+### Phase 6 — Seats become groups
+
+Everything so far assumes one peer is one player. That assumption is the only
+thing standing between this and a sofa full of people joining a friend online.
+
+- `HostSeat` holds one `playerId` and one `RemotePlayerInput`. It becomes a
+  group: `playerIds: number[]` and an input per id. `nextPlayerId()` becomes
+  `allocateIds(count)`, and the host reserves `1..L` for its own locals instead
+  of silently taking id 1.
+- **Protocol 4.** `hello` says how many players the machine brings; `welcome`
+  answers with a list of ids, possibly shorter than asked; `input` says which
+  player it is for. `Snapshot.ack` already keys by player id, so it does not
+  change.
+- `ClientGame` holds one `selfPlayerId`, one `localInput` and one prediction
+  history. Each becomes keyed by id, and `writePositions` skips the set of
+  predicted players rather than the one.
+- Presence stays per **machine**, not per player: a group goes quiet together,
+  sits out together, and comes back together. `clientId` still keys the held
+  seat — it just holds several ids now.
+
+**Done when** a two-machine game behaves exactly as it does today, through
+group-shaped code, with one local player on each side. All of it is provable
+against the fake transport before a browser is involved.
+
+### Phase 7 — More than one of you per machine
+
+- A "how many of you are here?" step before hosting or joining. The player
+  select screen is nearly it already — it builds one to four local slots with
+  the right device mapping — but it ends by calling `start()` rather than
+  handing the count back.
+- The lobby roster is keyed by player id, so it needs to group by machine.
+  Without that, four rows cannot be told apart from two people with two pads
+  each.
+- Partial admission: asking for three seats when two are free has to mean
+  something better than a refusal.
+
+**Done when** two people on one keyboard and pad play with a friend online.
+
+### Phase 8 — Eight
+
+- `MAX_PLAYERS` 8. The snapshot, the roster and the id allocator already take
+  it; the lobby's four roster rows become two columns of four.
+- **Visuals cycle in two dimensions.** Props repeat every four — none,
+  backpack, bow, pill — and the body colour changes every four: players 1-4
+  yellow, 5-8 green. Four players or fewer therefore look exactly as they do
+  now, which is the point: the cycling only appears once the current visuals
+  have run out.
+- Prop colours are currently fixed (`#8B5E3C` brown backpack, `#b44fff` violet
+  bow) and will need to derive from the body colour, or gain an outline, once
+  bodies stop being yellow.
+- The palette is tighter than it looks. Red, cyan, hotpink and orange are
+  enemies; `#0000cc` and white are frightened and flashing; white again is
+  eyes. Yellow, green and violet are comfortably distinct from all of that. A
+  fourth player colour is hard, which is the real reason the cap is 8 and not
+  16.
+
+---
+
 ## Decisions
 
 | Question | Decision | Why |
@@ -554,6 +628,85 @@ leaves the client trying, and on the menu once the window runs out.
 | Host leaves | **Everyone to the menu** | Host migration needs serialisable timers — the same wall that blocks rollback |
 | Client screen at game over | **GAME OVER + host status + LEAVE** | A client cannot otherwise distinguish a host typing initials from a dead connection |
 | Host picks the level | **Yes**, from the library before hosting | The editor is the most active part of the project; playing a friend's maze together is the payoff |
+| Player cap | **8** | 2 colours × 4 props, and a host upstream that stays inside a normal connection; see below |
+| Local players per machine | **Up to 4** | The player select screen already builds them; nothing in the protocol cares |
+| Lives with a crowd | **Left exactly as they are** | See below — it gets easier, deliberately |
+
+### Why the cap is 8, not 16
+
+Measured, not guessed. The host sends every client a full snapshot, so its
+upstream is peers × snapshot size × 20 Hz:
+
+| Players | Snapshot | All on their own machines | Two per machine |
+|---|---|---|---|
+| 4 | 887 B | 0.4 Mbit | 0.1 Mbit |
+| 8 | 1,331 B | **1.5 Mbit** | 0.6 Mbit |
+| 16 | 2,233 B | **5.2 Mbit** | 2.4 Mbit |
+
+At 16, a host whose friends each join from their own machine needs 5.2 Mbit/s
+of sustained upload and fifteen simultaneous peer connections — beyond a normal
+home connection, and far beyond a phone. 16 only works if players cluster onto
+a few machines, which is a constraint nobody would guess from the number.
+
+At 8 it holds up however people arrange themselves: 1.5 Mbit/s in the worst
+case, seven connections. If 16 is ever wanted, the fix is delta-encoded binary
+snapshots — roughly a tenth of the size — not a bigger constant.
+
+### Why a divergent prediction snaps rather than easing
+
+The first version nudged the player by the error instead of snapping, to avoid
+undoing the steps taken since. Three things were wrong with that, and all three
+were visible at 160 ms of round trip:
+
+- **It fired repeatedly for one divergence.** Inputs still in flight had been
+  recorded against a position the nudge had just invalidated, so the next
+  snapshot measured the same error again and nudged again — once per snapshot
+  until the history drained. That is what bouncing is.
+- **It had no idea where walls were.** A nudge is a raw translation of up to
+  several tiles, and it moved both axes at once even though a player in a
+  corridor is only ever travelling on one. Landing inside a wall is exactly how
+  you get a player who can walk through them.
+- **It chased measurement, not drift.** A snapshot's position is the host's
+  from a moment the client cannot pin down, so a small measured difference is
+  as likely to be timing as error.
+
+A snap has none of those problems: a host position is by definition somewhere
+the host could stand, so it cannot land in a wall, and clearing the prediction
+history with it means one divergence is corrected once.
+
+The real fix was upstream of all of it, though. The host stalls a player for a
+frame on every dot and 50 ms on every power pellet; the client never ate
+anything, so its prediction gained a frame per dot — a corridor's worth of dots
+adds up to whole tiles, always in the same direction. The client now stalls on
+the dots its own copy of the grid still shows. Nothing else about rubber
+banding mattered nearly as much.
+
+### Host-only state: what is left, on purpose
+
+Every sound the host plays now reaches clients, either as an event or because
+both sides start it at the same moment. Two things a client still sees
+differently, both deliberate rather than missed:
+
+- **HIGH SCORE is the machine's own.** `Stats` is per-device localStorage, and
+  only the host saves a finished game's score, so a client shows its own
+  device's best rather than the host's. Two people therefore see different
+  numbers above the same game. Sending the host's would make the shared screen
+  agree; showing your own makes the target personal. It shows your own today.
+- **The debug overlays are host-only.** Targeting arrows, enemy paths and the
+  global scatter/chase badge are drawn from state the host computes and never
+  sends, so on a client with `?dev=true` they are stale. Nothing else reads
+  that state, so the rest of the overlay is honest.
+
+### Lives with a crowd: easier, on purpose
+
+Nothing changes here, and the effect is worth stating so it is not mistaken for
+a bug. A shared life is only spent when *everyone* is down at once; a player
+who dies while others live simply sits out until the next level, which revives
+them. With eight players a total wipe is rare, so the pool is barely touched
+and the real mechanic becomes "how many of us are still up right now".
+
+More players therefore makes the game easier rather than harder. That is the
+intended shape: a crowd in one maze is supposed to be a little ridiculous.
 
 ### Mid-level joining, dropped
 
@@ -599,8 +752,10 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 
 ## Implementation Status
 
-All five phases are done, and so is automatic reconnection. What is left is the
-relay fallback, if NAT traversal proves too lossy in real use.
+All five phases are done, and so is automatic reconnection. Phases 6 to 8 —
+couch co-op alongside online play, up to eight players — are planned and not
+started. The relay fallback is still open, if NAT traversal proves too lossy in
+real use.
 
 | Feature | Status |
 |---|---|
@@ -618,6 +773,14 @@ relay fallback, if NAT traversal proves too lossy in real use.
 | Waiting banner when the host goes quiet | ✅ Complete |
 | Lobby code in the HUD during an online game | ✅ Complete — the lobby is the only other place it appears |
 | Marker over your own player online | ✅ Complete — the props say which slot, this says which is yours |
+| Prediction stalls on dots, as the host does | ✅ Complete — the cause of the rubber banding |
+| Divergence snaps instead of nudging | ✅ Complete — nudging bounced, and walked through walls |
+| Interpolation follows corners instead of cutting them | ✅ Complete |
+| Floating scores from eaten enemies and fruit reach clients | ✅ Complete |
+| Game-start chimes play on clients too | ✅ Complete |
+| Seats become groups (protocol 4, per-player prediction) | ⬜ Planned — Phase 6 |
+| Several local players on one machine, online | ⬜ Planned — Phase 7 |
+| Eight players, cycling colours and props | ⬜ Planned — Phase 8 |
 | Automatic reconnection (client retries by itself) | ✅ Complete — 28 s of retries against a 30 s seat hold |
 | Room survives game over, host restarts from the lobby | ✅ Complete |
 | Host picks a library level before hosting | ✅ Complete — and between games, not only before the first |
