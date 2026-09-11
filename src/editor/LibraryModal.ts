@@ -21,6 +21,8 @@ export interface LibraryModalOptions {
     actions: (entry: LibraryEntry) => LibraryAction[];
     /** An option that is not a saved map — the stock maze, for instance. */
     lead?: { label: string; onClick: (controls: LibraryModalControls) => void };
+    /** A line under the list, for naming controls the buttons cannot show. */
+    footer?: string;
 }
 
 /**
@@ -75,6 +77,7 @@ export function openLibraryModal(options: LibraryModalOptions): LibraryModalCont
     .ed-lib-btn-test  { color: #9bf !important; border-color: #46a !important; }
     .ed-lib-btn-del   { color: #f88 !important; border-color: #a33 !important; }
     #ed-lib-empty { color: #888; font-size: 14px; text-align: center; padding: 20px 0; }
+    #ed-lib-footer { color: #777; font-size: 13px; text-align: center; letter-spacing: 1px; }
     #ed-lib-lead, #ed-lib-close {
         background: #222; color: #eee; border: 1px solid #666;
         border-radius: 6px; padding: 10px 16px; cursor: pointer; min-height: 48px;
@@ -85,9 +88,15 @@ export function openLibraryModal(options: LibraryModalOptions): LibraryModalCont
     <div id="ed-lib-box">
         <h3></h3>
         <div id="ed-lib-list"></div>
+        <div id="ed-lib-footer" hidden></div>
         <button id="ed-lib-close">✕ Close</button>
     </div>`;
     (overlay.querySelector('#ed-lib-box h3') as HTMLElement).textContent = options.title;
+    if (options.footer !== undefined) {
+        const footer = overlay.querySelector('#ed-lib-footer') as HTMLElement;
+        footer.textContent = options.footer;
+        footer.hidden = false;
+    }
     document.body.appendChild(overlay);
 
     // Keep every gesture off the canvas underneath.
@@ -105,7 +114,12 @@ export function openLibraryModal(options: LibraryModalOptions): LibraryModalCont
     closeBtn.onclick = controls.close;
     closeBtn.focus();
     overlay.addEventListener('click', (e) => { if (e.target === overlay) controls.close(); });
-    overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') controls.close(); });
+    // Keys stop here. The screen underneath binds Escape and letter shortcuts
+    // of its own, and Escape closing the modal must not also leave the lobby.
+    overlay.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') controls.close();
+    });
 
     function refreshList(): void {
         const listEl = overlay.querySelector('#ed-lib-list') as HTMLElement;
