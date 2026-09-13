@@ -158,6 +158,13 @@ export class NetHost {
         return acks;
     }
 
+    /** Where each player stood when their acknowledged input was applied. */
+    ackPositions(): Record<number, { x: number; y: number }> {
+        const at: Record<number, { x: number; y: number }> = {};
+        for (const seat of this.seats.values()) at[seat.playerId] = { x: seat.input.ackX, y: seat.input.ackY };
+        return at;
+    }
+
     close(): void {
         for (const seat of this.seats.values()) {
             if (seat.releaseTimer !== null) clearTimeout(seat.releaseTimer);

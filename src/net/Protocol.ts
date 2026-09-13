@@ -10,7 +10,7 @@ import type { Direction, EnemyMode, LevelData } from '../types';
  * be refused at the handshake rather than half-working. GitHub Pages users hold
  * stale tabs for a long time, so this will happen.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 5;
 
 /** Seats in a room, host included. */
 export const MAX_PLAYERS = 4;
@@ -209,6 +209,17 @@ export interface InputMsg {
     buffered: Direction | null;
     /** Monotonic per-client, echoed back in `Snapshot.ack` for reconciliation. */
     seq: number;
+    /**
+     * Where the sender was standing when this was made.
+     *
+     * A turn is a decision about a *place*, not a moment. The host applies one
+     * a round trip after the client made it, from a point further down the
+     * corridor — so it starts around the corner that much later and stays that
+     * much behind, every single time. A few corners of that and the two
+     * disagree by more than the prediction can absorb.
+     */
+    x: number;
+    y: number;
 }
 
 export interface LeaveMsg {
@@ -238,6 +249,20 @@ export interface Snapshot {
     tick: number;
     /** Last input seq the host has seen, per player id. */
     ack: Record<number, number>;
+    /**
+     * Where the host's copy of each player stood when it applied that
+     * acknowledged input.
+     *
+     * Reconciliation needs to compare like with like. The player's position
+     * elsewhere in this snapshot is from the moment the snapshot was taken,
+     * which is a third of a second further on than the input being
+     * acknowledged — so comparing the two measures the round trip, not the
+     * disagreement, and a jittery link pushes that difference past any
+     * sensible threshold on its own. This is the same instant in the input
+     * stream as the client's own record, so what is left over is divergence
+     * and nothing else.
+     */
+    ackAt: Record<number, { x: number; y: number }>;
     players: SnapshotPlayer[];
     /** Always 4, in gameObjects order. */
     enemies: SnapshotEnemy[];
@@ -298,6 +323,7 @@ function compactSnapshot(snap: Snapshot): Snapshot {
     return {
         ...snap,
         players: snap.players.map(p => ({ ...p, x: round1(p.x), y: round1(p.y), deathProgress: round1(p.deathProgress) })),
+        ackAt: Object.fromEntries(Object.entries(snap.ackAt).map(([id, at]) => [id, { x: round1(at.x), y: round1(at.y) }])),
         enemies: snap.enemies.map(e => ({ ...e, x: round1(e.x), y: round1(e.y) })),
     };
 }

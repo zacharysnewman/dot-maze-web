@@ -11,7 +11,7 @@ import { Time } from '../static/Time';
 import type { Direction, IGameObject, LevelData, PlayerState } from '../types';
 import { RemotePlayerInput } from './RemotePlayerInput';
 import type { InputMsg, NetEvent, Snapshot, SnapshotPlayer } from './Protocol';
-import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, tileFromIndex } from './Protocol';
+import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, tileFromIndex, tileIndex } from './Protocol';
 import { TILE_DOT, TILE_EMPTY, TILE_POWER } from '../tiles';
 
 const ENEMY_COLORS = ['red', 'cyan', 'hotpink', 'orange'] as const;
@@ -89,6 +89,19 @@ export class ClientGame {
     private readonly predicted = new Map<number, { x: number; y: number }>();
     /** While this is in the future the predicted player is mid-bite, as on the host. */
     private stallUntil = 0;
+    /**
+     * Tiles this prediction has already stalled on, waiting for the host to
+     * confirm them.
+     *
+     * The grid stays the host's to say, so a tile the prediction has eaten
+     * still shows a dot locally until the snapshot naming it arrives — a round
+     * trip later. Turn around inside that window and the prediction bites the
+     * same dot again, stalling a frame the host never stalls. Do that a few
+     * times down a corridor and the prediction is half a tile behind for no
+     * reason anyone can see, until the gap is wide enough to snap. Remembering
+     * what it has already bitten costs one integer per dot.
+     */
+    private readonly predictedEaten = new Set<number>();
 
     /**
      * `startLevel` is the level number the first snapshot will carry. Starting
@@ -167,8 +180,16 @@ export class ClientGame {
      */
     private predictedTileEntered(x: number, y: number): void {
         const tile = Levels.levelDynamic[y]?.[x];
-        if (tile === TILE_DOT) this.stallUntil = Time.timeSinceStart + DOT_STALL_SECONDS;
-        else if (tile === TILE_POWER) this.stallUntil = Time.timeSinceStart + POWER_STALL_SECONDS;
+        if (tile !== TILE_DOT && tile !== TILE_POWER) return;
+
+        // Already bitten by this prediction: the host will stall for it once,
+        // and has no second stall to model.
+        const index = tileIndex(x, y);
+        if (this.predictedEaten.has(index)) return;
+        this.predictedEaten.add(index);
+
+        this.stallUntil = Time.timeSinceStart
+            + (tile === TILE_DOT ? DOT_STALL_SECONDS : POWER_STALL_SECONDS);
     }
 
     /** The local player's actor, so the caller can record where it predicted. */
@@ -257,11 +278,14 @@ export class ClientGame {
         // eaten tiles can express. Rebuild from the level and start again.
         if (snap.level !== this.lastLevel) {
             Levels.levelDynamic = gameState.currentLevel.tiles.map(row => [...row]);
+            this.predictedEaten.clear();
             this.lastLevel = snap.level;
         }
         for (const index of snap.eaten) {
             const { x, y } = tileFromIndex(index);
             if (Levels.levelDynamic[y] !== undefined) Levels.levelDynamic[y][x] = TILE_EMPTY;
+            // Confirmed: the grid now agrees, so nothing needs remembering.
+            this.predictedEaten.delete(index);
         }
 
         for (const p of snap.players) {
@@ -303,11 +327,16 @@ export class ClientGame {
      * Pull the prediction back toward the host when they have genuinely
      * diverged.
      *
-     * The comparison is against where the prediction *was* when the host's
-     * last acknowledged input went out, not against where it is now — those are
-     * a round trip apart, and comparing them would report an error every frame.
-     * Small disagreement is left alone: the host briefly stalls the player on
-     * each dot, which the client does not model, and chasing that would jitter.
+     * Both sides record where their player stood at the same moment in the
+     * input stream — the client when it sent an input, the host when it applied
+     * it — and the comparison is between those two records. Measuring against
+     * the player's position elsewhere in the snapshot would instead measure the
+     * round trip separating them, which a jittery link can push past any
+     * threshold on its own; the prediction would then be snapped for being
+     * late rather than for being wrong, which is the jerk it exists to prevent.
+     *
+     * Small disagreement is still left alone. A frame here or there is cheaper
+     * to carry than to chase.
      */
     private reconcile(snap: Snapshot): void {
         const self = gameState.players.find(p => p.id === this.selfPlayerId);
@@ -323,15 +352,26 @@ export class ClientGame {
         // Sitting out, dying, or frozen: the host's position is the only one
         // that means anything.
         if (!authority.active || authority.dying || snap.frozen) {
-            this.giveUpPrediction(self, authority);
+            // Not a disagreement: there is nothing to predict while dying,
+            // sitting out or frozen, so this does not count as a correction.
+            this.giveUpPrediction(self, authority, false);
             return;
         }
         if (at === undefined) return;
 
-        const dx = authority.x - at.x;
-        const dy = authority.y - at.y;
+        // Compare the two records of the same instant in the input stream: the
+        // client's position when it sent this input, and the host's when it
+        // applied it. The player's position elsewhere in the snapshot is a
+        // round trip further on, and measuring against that reports the
+        // latency as though it were error — on a jittery link that alone
+        // crosses the threshold and snaps a prediction that was never wrong.
+        const ackAt = snap.ackAt?.[this.selfPlayerId];
+        if (ackAt === undefined) return;
+
+        const dx = ackAt.x - at.x;
+        const dy = ackAt.y - at.y;
         if (Math.abs(dx) > SNAP_ABOVE || Math.abs(dy) > SNAP_ABOVE) {
-            this.giveUpPrediction(self, authority);
+            this.giveUpPrediction(self, authority, true);
         }
     }
 
@@ -344,7 +384,10 @@ export class ClientGame {
      * divergence again and snap again — once per snapshot until the history
      * drained, which reads as the player bouncing.
      */
-    private giveUpPrediction(self: PlayerState, authority: SnapshotPlayer): void {
+    private giveUpPrediction(self: PlayerState, authority: SnapshotPlayer, diverged: boolean): void {
+        // Only a real disagreement counts. A snap onto the host's position
+        // because the player is dying is not a jerk anyone can see.
+        if (diverged) gameState.netCorrections++;
         snapTo(self, authority);
         this.predicted.clear();
         this.stallUntil = 0;

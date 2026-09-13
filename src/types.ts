@@ -26,6 +26,8 @@ export interface IGameObject {
     enemyMode?: EnemyMode;
     pendingReverse?: boolean;
     update(): void;
+    /** Walk to a position, firing tile callbacks for everything on the way. */
+    sweepTo(x: number, y: number, onStep?: () => void): void;
     roundedX(): number;
     roundedY(): number;
     gridX(): number;

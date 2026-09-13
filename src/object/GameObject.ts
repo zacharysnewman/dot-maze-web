@@ -55,6 +55,37 @@ export class GameObject implements IGameObject {
         this.drawFunction(this);
     }
 
+    /**
+     * Travel to a position as if it had been walked, rather than appearing
+     * there.
+     *
+     * `checkTileUpdates` only ever fires for the tile an object lands on, so
+     * assigning a position two tiles away silently skips the one in between —
+     * its dot uneaten, anything standing in it never met. Stepping half a tile
+     * at a time visits every tile on the way, in order, and `onStep` lets the
+     * caller run the checks a normal frame would.
+     */
+    sweepTo(x: number, y: number, onStep?: () => void): void {
+        const maxStep = unit / 2;
+        for (;;) {
+            const dx = x - this.x;
+            const dy = y - this.y;
+            const remaining = Math.abs(dx) + Math.abs(dy);
+            if (remaining <= maxStep) {
+                this.x = x;
+                this.y = y;
+                this.checkTileUpdates();
+                onStep?.();
+                return;
+            }
+            const fraction = maxStep / remaining;
+            this.x += dx * fraction;
+            this.y += dy * fraction;
+            this.checkTileUpdates();
+            onStep?.();
+        }
+    }
+
     roundedX(): number { return Math.round(this.gridX()); }
     roundedY(): number { return Math.round(this.gridY()); }
     gridX(): number    { return this.x / unit - 0.5; }

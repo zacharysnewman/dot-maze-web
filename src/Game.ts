@@ -750,19 +750,28 @@ function loseLife(player: PlayerState): void {
 // ── Collision Detection ───────────────────────────────────────────────────────
 
 function checkCollisions(): void {
-    for (const player of gameState.players) {
-        if (!player.active || player.dying || player.frozen) continue;
-        const px = player.actor.roundedX();
-        const py = player.actor.roundedY();
-        for (const enemy of gameState.enemies) {
-            if (enemy.roundedX() === px && enemy.roundedY() === py) {
-                if (enemy.enemyMode === 'frightened') {
-                    eatEnemy(enemy, player);
-                } else if (enemy.enemyMode !== 'eyes' && enemy.enemyMode !== 'entering' &&
-                           enemy.enemyMode !== 'house' && enemy.enemyMode !== 'exiting') {
-                    loseLife(player);
-                    break; // stop checking enemies for this player; continue to next player
-                }
+    for (const player of gameState.players) checkPlayerCollisions(player);
+}
+
+/**
+ * One player against every enemy, at wherever that player currently stands.
+ *
+ * Split out so a rebuilt corner can run it at each step of the path: a player
+ * put through a junction has to meet whatever was standing in it, exactly as
+ * they would have on an ordinary frame.
+ */
+function checkPlayerCollisions(player: PlayerState): void {
+    if (!player.active || player.dying || player.frozen) return;
+    const px = player.actor.roundedX();
+    const py = player.actor.roundedY();
+    for (const enemy of gameState.enemies) {
+        if (enemy.roundedX() === px && enemy.roundedY() === py) {
+            if (enemy.enemyMode === 'frightened') {
+                eatEnemy(enemy, player);
+            } else if (enemy.enemyMode !== 'eyes' && enemy.enemyMode !== 'entering' &&
+                       enemy.enemyMode !== 'house' && enemy.enemyMode !== 'exiting') {
+                loseLife(player);
+                return; // dead; nothing else in this tile matters
             }
         }
     }
@@ -836,6 +845,16 @@ function initializeLevel(slots: ConfirmedSlot[], levelOverride?: LevelData): voi
     // Create all players from confirmed slots
     gameState.players = slots.map(s => createPlayer(s.id, lv.playerStart, s.input));
 
+    // A rebuilt corner walks a player through tiles between frames, so it runs
+    // the same collision check an ordinary frame would at each step. Wired here
+    // rather than at the call site because a player created without it would
+    // quietly stop meeting things it walked into.
+    for (const player of gameState.players) {
+        if (player.input instanceof RemotePlayerInput) {
+            player.input.onPathStep = () => checkPlayerCollisions(player);
+        }
+    }
+
     const es = lv.enemyStarts;
     gameState.redEnemy     = new GameObject('red',     es.redEnemy.x,     es.redEnemy.y,     0.667, Move.redEnemy,     Draw.enemy, enemyOnTileChanged, makeEnemyTileCentered(() => gameState.redEnemy));
     gameState.cyanEnemy    = new GameObject('cyan',    es.cyanEnemy.x,    es.cyanEnemy.y,    0.667, Move.cyanEnemy,    Draw.enemy, enemyOnTileChanged, makeEnemyTileCentered(() => gameState.cyanEnemy));
@@ -881,6 +900,9 @@ function feedDebugNetLoopback(): void {
         held: encodeHeld(source.input),
         buffered: source.input.bufferedDir,
         seq: ++debugNetSeq,
+        // The mirror stands where its source stands.
+        x: source.actor.x,
+        y: source.actor.y,
     };
 
     const decoded = decodeMessage(encodeMessage(msg));
@@ -1041,6 +1063,7 @@ function buildSnapshot(forWelcome = false): Snapshot {
         t: 'snap',
         tick: snapshotTick,
         ack: netHost?.acks() ?? {},
+        ackAt: netHost?.ackPositions() ?? {},
         players: gameState.players.map(p => ({
             id: p.id,
             x: p.actor.x,
@@ -1742,6 +1765,7 @@ function startClientGame(level: LevelData, state: Snapshot | null = null): void 
     if (GamepadPlayerInput.connectedIndices().includes(0)) inputs.push(new GamepadPlayerInput(0));
     clientInput = new InputSampler(new CompositePlayerInput(inputs) as PlayerInput);
 
+    gameState.netCorrections = 0;
     clientGame = new ClientGame(level, netClient.playerId, state?.level ?? 1);
     gameState.onlineCode = netClient.code;
     gameState.onlinePlayerId = netClient.playerId;
@@ -1771,6 +1795,11 @@ function clientFrame(): void {
     clientPrevB = bDown;
 
     if (clientPhase === 'playing' && clientConnection === 'connected') sendClientInput();
+
+    if (gameState.debugEnabled) {
+        const el = document.getElementById('dbg-corrections');
+        if (el !== null) el.textContent = `Corrections: ${gameState.netCorrections}`;
+    }
 
     if (clientPhase === 'initials') {
         // The host is typing initials. Clients never enter them — the host
@@ -1805,14 +1834,18 @@ function sendClientInput(): void {
     // A buffered turn is an edge and is never held back for the heartbeat.
     if (held === lastSentHeld && buffered === null && framesSinceInput < INPUT_HEARTBEAT_FRAMES) return;
 
-    const seq = netClient.sendInput(held, buffered);
+    // Where this was asked for. The host places a turn at the point it was
+    // made, not wherever its own player has reached by the time it lands.
+    const actor = clientGame.selfActor();
+    const at = { x: actor?.x ?? 0, y: actor?.y ?? 0 };
+
+    const seq = netClient.sendInput(held, buffered, at);
     lastSentHeld = held;
     framesSinceInput = 0;
 
     // The same message drives the local prediction, and the position it was
     // sent from is what the host's acknowledgement will be compared against.
-    const actor = clientGame.selfActor();
-    clientGame.applyLocalInput({ t: 'input', held, buffered, seq }, actor?.x ?? 0, actor?.y ?? 0);
+    clientGame.applyLocalInput({ t: 'input', held, buffered, seq, x: at.x, y: at.y }, at.x, at.y);
 }
 
 function applyClientSnapshot(snapshot: Snapshot): void {
@@ -2150,6 +2183,7 @@ window.onload = function () {
                 cursor: pointer; padding: 9px 0;
             }
             #dbg-toggle { font-size: 27px; color: #aaa; }
+            #dbg-corrections { font-size: 27px; color: #ff8; margin: 15px 0; }
             #debug-panel label {
                 display: flex; align-items: center;
                 gap: 18px; cursor: pointer; margin: 15px 0;
@@ -2215,6 +2249,7 @@ window.onload = function () {
                 <label><input type="checkbox" id="dbg-enemypaths"> Enemy paths</label>
                 <label><input type="checkbox" id="dbg-tilepicker"> Tile picker</label>
                 <label><input type="checkbox" id="dbg-no-predict"> Online: no prediction</label>
+                <div id="dbg-corrections">Corrections: 0</div>
                 <label style="flex-direction:column;align-items:flex-start;gap:10px">
                     <span id="dbg-extra-players-label">Extra players: 0</span>
                     <input type="range" id="dbg-extra-players" min="0" max="3" value="0"
@@ -2381,7 +2416,9 @@ window.onload = function () {
         if (document.visibilityState === 'visible') {
             clientGame?.resync();
         } else if (clientRunning) {
-            netClient?.sendInput(0, null);
+            // Hands off the controls on the way out; the place is immaterial
+            // because nothing is being asked for.
+            netClient?.sendInput(0, null, { x: 0, y: 0 });
         }
     });
 

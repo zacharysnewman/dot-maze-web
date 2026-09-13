@@ -177,10 +177,10 @@ export class NetClient {
      * what lets a seat drop anything late or duplicated — and what lets the
      * client line a snapshot up against what it predicted at the time.
      */
-    sendInput(held: number, buffered: Direction | null): number {
+    sendInput(held: number, buffered: Direction | null, at: { x: number; y: number }): number {
         if (this.closed || this.hostPeerId === null) return this.seq;
         this.seq++;
-        this.sendTo({ t: 'input', held, buffered, seq: this.seq }, this.hostPeerId);
+        this.sendTo({ t: 'input', held, buffered, seq: this.seq, x: at.x, y: at.y }, this.hostPeerId);
         return this.seq;
     }
 

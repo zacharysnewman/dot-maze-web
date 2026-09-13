@@ -67,5 +67,13 @@ export const gameState = {
     /** Draw the local player from snapshots like everyone else, to see whether
      *  a movement problem is the prediction's or the host's. */
     debugDisablePrediction: false,
+    /**
+     * How many times this client's prediction disagreed with the host badly
+     * enough to be thrown away. Every one is a visible jerk, so it is the
+     * number to watch when tuning how input and movement are sent. Snapping
+     * onto the host while dying or frozen does not count — nothing is being
+     * predicted then.
+     */
+    netCorrections: 0,
     debugSelectedTile: null as { x: number; y: number } | null,
 };

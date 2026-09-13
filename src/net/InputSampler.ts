@@ -10,6 +10,7 @@ import { encodeHeld } from './Protocol';
 const OPEN_CROSSROADS: IGameObject = {
     color: 'yellow', x: 0, y: 0, scale: 1, moveSpeed: 1, moveDir: 'left',
     update() {},
+    sweepTo() {},   // nothing to walk through: this actor is a thought experiment
     roundedX: () => 0, roundedY: () => 0,
     gridX: () => 0, gridY: () => 0,
     roundedAbsoluteX: () => 0, roundedAbsoluteY: () => 0,

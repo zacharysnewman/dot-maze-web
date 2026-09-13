@@ -114,9 +114,17 @@ and GitHub Pages users hold stale tabs for a long time. Mismatches must be
 refused with a "reload the page" message rather than half-working.
 
 Bump `PROTOCOL_VERSION` whenever `LevelData`, the snapshot format or the input
-format changes. It is at **3**: the handshake gained `clientId`, which is what
-a held seat is keyed by, and the scored events gained a position and an amount,
-which is what a client draws a floating score from.
+format changes. It is at **5**:
+
+- **3** — the handshake gained `clientId`, which is what a held seat is keyed
+  by, and the scored events gained a position and an amount, which is what a
+  client draws a floating score from.
+- **4** — an input carries the position it was made at, so the host can place a
+  turn at the junction the player chose rather than wherever its own copy has
+  reached.
+- **5** — a snapshot carries `ackAt`, where the host stood when it applied each
+  acknowledged input, so reconciliation compares the same instant on both sides
+  instead of comparing across the round trip.
 
 ### Client → host: input
 
@@ -128,8 +136,13 @@ interface InputMsg {
     held: number;             // bitmask: 1=left 2=right 4=up 8=down
     buffered: Direction | null;
     seq: number;              // for prediction reconciliation
+    x: number;                // where the sender stood when this was made
+    y: number;
 }
 ```
+
+The position is there because a turn is a decision about a *place*, not a
+moment. See [Turns are addressed to a junction](#turns-are-addressed-to-a-junction).
 
 Held state matters as well as the buffered direction — holding into a wall until
 a corridor opens is real behaviour in `KeyboardPlayerInput.update`, and sending
@@ -137,7 +150,10 @@ only "the direction I want" would lose it.
 
 ### Host → client: snapshot
 
-20 Hz, JSON. A full four-player snapshot measures **887 bytes**, so a host with
+20 Hz, JSON. Carries `ack` (the last input seq seen per player) and `ackAt`
+(where the host stood when it applied it — see [Why a divergent prediction
+snaps rather than easing](#why-a-divergent-prediction-snaps-rather-than-easing)).
+A full four-player snapshot measures **887 bytes**, so a host with
 three clients uploads ~52 KB/s (~420 kbit/s) and each client pulls ~17 KB/s.
 Fine on broadband, tight on a weak uplink — the first lever if it bites is
 eliding default-valued fields, then a binary encoding quantising positions to
@@ -681,6 +697,88 @@ adds up to whole tiles, always in the same direction. The client now stalls on
 the dots its own copy of the grid still shows. Nothing else about rubber
 banding mattered nearly as much.
 
+### What was actually still snapping
+
+A later round of rubber banding, reported from real play as happening "on
+turns", turned out on measurement not to be about turns at all. Three things
+were found, and it is worth recording which of them earned their place, because
+the obvious suspect did not.
+
+Measured with an added harness (`corners-e2e.js`): two browsers over the local
+relay, every data-channel send delayed 80 ms with 60 ms of jitter, the client
+changing direction every 420 ms for 40 turns. It reports how far apart the two
+simulations were at each acknowledgement, and counts the snaps a player would
+see.
+
+**The comparison was measuring latency, not error.** The client compared its
+recorded position for input *n* against the player's position in the snapshot
+that acknowledged *n* — but that position is from when the snapshot was taken,
+a third of a second further on. The two offsets mostly cancel, which is why
+this went unnoticed; jitter stops them cancelling, and the leftover crossed the
+30 px threshold on its own. The prediction was being snapped for being late
+rather than for being wrong — the snap causing the jerk, not fixing one. The
+host now also reports where it stood when it *applied* each acknowledged input
+(`Snapshot.ackAt`), so both records describe the same instant in the input
+stream. Median disagreement along the direction of travel fell from 3 px to 0.
+
+**The dot stall could fire twice for one dot.** The client's grid is the host's
+to write, so a dot the prediction has eaten still shows locally until the
+snapshot naming it arrives. Reverse direction inside that window — which is
+ordinary play at a junction — and the prediction bites it again, stalling a
+frame the host never stalls. The client now remembers which tiles its own
+prediction has already stalled on and forgets each one as the host confirms it.
+p90 disagreement fell from ~25 px to 6–14 px.
+
+Together, over 12 baseline and 14 fixed trials of 40 turns each, visible snaps
+fell from a median of 3.5 to 2 (mean 3.4 to 2.4). The distributions overlap —
+both arms produced runs of 1 and runs of 5 or 6 — so the snap count is the
+weaker of the two results. The disagreement magnitude is the solid one, and it
+is the quantity that decides whether a snap happens at all.
+
+**The corner placement did not move the needle, and was kept anyway.** See
+below.
+
+### Turns are addressed to a junction
+
+An input says *what*, not *where*. The host applies one a round trip after the
+client made it, from a point further down the corridor — so `isDirOpen` asks
+about the wrong tile, and a turn made at a junction can be tested against the
+corridor past it, where the wall says no.
+
+So a client sends the position it was standing at, and the host uses it twice:
+
+- as a **gate** — hold the turn until the host's own player reaches that point.
+  This needs no authority at all. It is the host declining to act early on
+  information about a place it has not got to yet.
+- as a **rebuild**, when the host has already passed the point by up to a tile:
+  sweep back to the junction, turn, and spend the distance travelled since on
+  the new corridor.
+
+Conserving the distance is the point of the second half. Simply moving the
+player back would put them behind where they are on their own screen, and a
+moment later they could be caught by something they had already passed — a
+death no zero-latency simulation would have produced. Walking the same distance
+around the corner puts them where they would have been all along. Both legs go
+through `sweepTo`, which steps in half-tiles and fires the tile callbacks and
+collision checks as it goes, so a rebuilt corner cannot carry a player through
+a dot or a ghost it should have met.
+
+This is bounded client authority over position, and the bounds are the argument
+for it: only at turns, only backwards, only within one tile, and only
+distance-conserving. Past a tile the host gives up on the place and lets the
+ordinary input buffer take the turn at the next junction — swallowing the input
+entirely would be worse than taking it a corner late.
+
+**It is honest to record that this did not measurably help.** The mechanism
+runs — 28 to 30 rebuilds in a 40-turn trial, overshoot 0–2 px — but junction
+agreement and snap counts were the same with it disabled, because in a harness
+with artificial latency the host is already standing where the client said it
+was when the turn lands (median overshoot at judgement: 0 px). It is kept
+because it is correct about a real failure the harness does not reproduce — a
+turn judged against the wrong tile — and because it costs two numbers per input
+message and cannot make the host's simulation disagree with itself. If it ever
+needs to justify itself again, that is the measurement to beat.
+
 ### Host-only state: what is left, on purpose
 
 Every sound the host plays now reaches clients, either as an event or because
@@ -775,10 +873,13 @@ real use.
 | Marker over your own player online | ✅ Complete — the props say which slot, this says which is yours |
 | Prediction stalls on dots, as the host does | ✅ Complete — the cause of the rubber banding |
 | Divergence snaps instead of nudging | ✅ Complete — nudging bounced, and walked through walls |
+| Reconciliation compares the same instant on both sides (`ackAt`) | ✅ Complete — it was measuring the round trip as error |
+| Prediction stalls once per dot, not once per pass over it | ✅ Complete — reversing at a junction bit the same dot twice |
+| Turns placed at the junction they were asked for | ✅ Complete — gated, rebuilt within a tile, distance-conserving |
 | Interpolation follows corners instead of cutting them | ✅ Complete |
 | Floating scores from eaten enemies and fruit reach clients | ✅ Complete |
 | Game-start chimes play on clients too | ✅ Complete |
-| Seats become groups (protocol 4, per-player prediction) | ⬜ Planned — Phase 6 |
+| Seats become groups (per-player prediction) | ⬜ Planned — Phase 6 |
 | Several local players on one machine, online | ⬜ Planned — Phase 7 |
 | Eight players, cycling colours and props | ⬜ Planned — Phase 8 |
 | Automatic reconnection (client retries by itself) | ✅ Complete — 28 s of retries against a 30 s seat hold |
