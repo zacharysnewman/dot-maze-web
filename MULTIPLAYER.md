@@ -390,6 +390,11 @@ turn waits at a wall and fires when the corridor opens, the buffer expires after
 - The menu gained `HOST ONLINE` / `JOIN ONLINE` below `START GAME`. It is a list
   now, navigable by arrows, d-pad or swipe — but `START GAME` is first and
   selected, so tap-tap-play reaches the same place it always did.
+- Those two entries appear only with `?multiplayer` in the URL. Online play is
+  the part that can leave a player waiting on a stranger's relay, so it is
+  opt-in: without the parameter the menu is `START GAME` alone and nothing on
+  screen hints that online exists. `?multiplayer=false` and `?multiplayer=0`
+  read as off, so a link can turn it back down.
 - Code entry follows `showInitialsEntry`: a transparent full-screen input, so a
   keyboard types into it and a tap raises the mobile keypad. Gamepads get the
   arcade treatment instead — left/right for the slot, up/down to spin the digit —

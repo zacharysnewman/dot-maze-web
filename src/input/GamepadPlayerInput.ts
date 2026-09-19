@@ -1,14 +1,8 @@
 import type { PlayerInput } from './PlayerInput';
 import { applyPlayerInput, bufferDir } from './PlayerInput';
+import { connectedPads, padDirections } from './GamepadRead';
+import type { PadDirections } from './GamepadRead';
 import type { Direction, IGameObject } from '../types';
-
-const DEADZONE = 0.3;
-
-// Standard gamepad mapping button indices
-const BTN_UP    = 12;
-const BTN_DOWN  = 13;
-const BTN_LEFT  = 14;
-const BTN_RIGHT = 15;
 
 export class GamepadPlayerInput implements PlayerInput {
     leftPressed  = false;
@@ -46,9 +40,7 @@ export class GamepadPlayerInput implements PlayerInput {
     // soon as the browser reports them (even before a button press on some platforms).
     static connectedIndices(): number[] {
         const indices = new Set<number>(GamepadPlayerInput._seenViaEvent);
-        for (const gp of navigator.getGamepads()) {
-            if (gp !== null) indices.add(gp.index);
-        }
+        for (const gp of connectedPads()) indices.add(gp.index);
         return Array.from(indices).sort((a, b) => a - b);
     }
 
@@ -58,19 +50,10 @@ export class GamepadPlayerInput implements PlayerInput {
         window.addEventListener('gamepaddisconnected', () => callback());
     }
 
-    private poll(): { left: boolean; right: boolean; up: boolean; down: boolean } {
+    private poll(): PadDirections {
         const gp = navigator.getGamepads()[this.gamepadIndex];
         if (!gp) return { left: false, right: false, up: false, down: false };
-
-        const axisX = gp.axes[0] ?? 0;
-        const axisY = gp.axes[1] ?? 0;
-
-        return {
-            left:  (gp.buttons[BTN_LEFT]?.pressed  ?? false) || axisX < -DEADZONE,
-            right: (gp.buttons[BTN_RIGHT]?.pressed ?? false) || axisX >  DEADZONE,
-            up:    (gp.buttons[BTN_UP]?.pressed    ?? false) || axisY < -DEADZONE,
-            down:  (gp.buttons[BTN_DOWN]?.pressed  ?? false) || axisY >  DEADZONE,
-        };
+        return padDirections(gp);
     }
 
     update(actor: IGameObject): void {

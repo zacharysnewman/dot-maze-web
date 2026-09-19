@@ -23,6 +23,7 @@ import { KeyboardPlayerInput } from './input/KeyboardPlayerInput';
 import { TouchPlayerInput    } from './input/TouchPlayerInput';
 import { GamepadPlayerInput  } from './input/GamepadPlayerInput';
 import { CompositePlayerInput } from './input/CompositePlayerInput';
+import { MenuGamepad } from './input/MenuGamepad';
 import { RemotePlayerInput } from './net/RemotePlayerInput';
 import type { InputMsg } from './net/Protocol';
 import { encodeHeld, encodeMessage, decodeMessage } from './net/Protocol';
@@ -1225,10 +1226,20 @@ let audioUnlocked = false;   // true after first user gesture (AudioContext crea
 let menuMusicPlaying = false; // true while menu music is actively playing
 let controllerActive = false; // true once any gamepad interaction is detected; never resets
 
+/**
+ * Online play is opt-in: the host/join entries exist only for a visitor who
+ * asked for them with ?multiplayer. Everyone else gets the local game alone,
+ * with no sign that anything else is there.
+ */
+const onlineEnabled = ((): boolean => {
+    const value = new URLSearchParams(window.location.search).get('multiplayer');
+    return value !== null && value !== 'false' && value !== '0';
+})();
+
 // Start-screen menu. 'play' is first so the long-standing flow — tap, tap, play
 // — reaches the same place it always did without touching the arrows.
-const MENU_ITEMS = ['play', 'host', 'join'] as const;
-type MenuItem = typeof MENU_ITEMS[number];
+type MenuItem = 'play' | 'host' | 'join';
+const MENU_ITEMS: readonly MenuItem[] = onlineEnabled ? ['play', 'host', 'join'] : ['play'];
 let menuIndex = 0;
 
 // Online session state. Exactly one of netHost / netClient is set while a
@@ -1258,10 +1269,8 @@ let framesSinceInput = 0;
 
 let menuAnimTime = 0;
 let menuAnimLastTs = 0;
-// Gamepad button states on the start screen, for rising-edge detection
-let startScreenPrevA = false;
-let startScreenPrevUp = false;
-let startScreenPrevDown = false;
+// Pad navigation for the start screen, on whichever pads are connected.
+const startScreenPad = new MenuGamepad();
 
 function drawMenuPlayer(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, dir: 'left' | 'right', mouthOpen: number): void {
     const dirMultiplier = dir === 'right' ? 0 : 1;
@@ -1378,6 +1387,17 @@ function menuKeyHandler(e: KeyboardEvent): void {
     if (e.key === 'ArrowUp')        { e.preventDefault(); moveMenu(-1); }
     else if (e.key === 'ArrowDown') { e.preventDefault(); moveMenu(1); }
     else                            { handleMenuInteraction(); }
+}
+
+/**
+ * Everything the person at this device plays with: keyboard, touch, and the
+ * first pad the browser reports — whichever slot that pad happens to occupy.
+ */
+function localInputList(): PlayerInput[] {
+    const inputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
+    const padIdx = GamepadPlayerInput.connectedIndices()[0];
+    if (padIdx !== undefined) inputs.push(new GamepadPlayerInput(padIdx));
+    return inputs;
 }
 
 // ── Online lobby ──────────────────────────────────────────────────────────────
@@ -1671,8 +1691,7 @@ function hostStartGame(): void {
     if (!lobbyRunning || netHost === null) return;
     disconnectedPlayers.clear();
 
-    const localInputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
-    if (GamepadPlayerInput.connectedIndices().includes(0)) localInputs.push(new GamepadPlayerInput(0));
+    const localInputs: PlayerInput[] = localInputList();
     const slots: ConfirmedSlot[] = [
         { id: 1, input: new CompositePlayerInput(localInputs) as PlayerInput },
         ...netHost.seatList().map(seat => ({ id: seat.playerId, input: seat.input as PlayerInput })),
@@ -1738,9 +1757,7 @@ function startClientGame(level: LevelData, state: Snapshot | null = null): void 
     menuMusicPlaying = false;
     if (state === null) Sound.introChimes();
 
-    const inputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
-    if (GamepadPlayerInput.connectedIndices().includes(0)) inputs.push(new GamepadPlayerInput(0));
-    clientInput = new InputSampler(new CompositePlayerInput(inputs) as PlayerInput);
+    clientInput = new InputSampler(new CompositePlayerInput(localInputList()) as PlayerInput);
 
     clientGame = new ClientGame(level, netClient.playerId, state?.level ?? 1);
     gameState.onlineCode = netClient.code;
@@ -1915,18 +1932,22 @@ function playerSelectLoop(): void {
 
     function confirmAndStart(): void {
         if (!selectRunning) return;
+        // Positions in this list, not the raw gamepad indices behind them: a
+        // single pad can sit on any slot the browser hands out, and asking for
+        // "pad 0" left a lone Joy-Con on slot 1 controlling nobody.
         const connected = GamepadPlayerInput.connectedIndices();
         const confirmedSlots: ConfirmedSlot[] = [];
 
         for (let id = 1; id <= playerCount; id++) {
             if (id === 1) {
                 const inputs: PlayerInput[] = [new KeyboardPlayerInput(), new TouchPlayerInput()];
-                if (!controllerMode && connected.includes(0)) inputs.push(new GamepadPlayerInput(0));
+                const p1Pad = connected[0];
+                if (!controllerMode && p1Pad !== undefined) inputs.push(new GamepadPlayerInput(p1Pad));
                 confirmedSlots.push({ id: 1, input: new CompositePlayerInput(inputs) as PlayerInput });
             } else {
-                // PAD SHIFT: P2=pad0, P3=pad1 ... KEYBOARD: P2=pad1, P3=pad2 ...
-                const padIdx = controllerMode ? id - 2 : id - 1;
-                if (padIdx >= 0 && connected.includes(padIdx)) {
+                // PAD SHIFT: P2=1st pad, P3=2nd pad ... KEYBOARD: P2=2nd pad, P3=3rd pad ...
+                const padIdx = connected[controllerMode ? id - 2 : id - 1];
+                if (padIdx !== undefined) {
                     confirmedSlots.push({ id, input: new GamepadPlayerInput(padIdx) as PlayerInput });
                 }
             }
@@ -1937,28 +1958,22 @@ function playerSelectLoop(): void {
         start(confirmedSlots);
     }
 
-    // Gamepad state tracking for rising-edge detection
-    const prevBtns: boolean[][] = [[], [], [], []];
+    // Any pad can work this screen, not just the one on slot 0 — the player
+    // holding the only pad is P2 in PAD SHIFT mode anyway. reset() makes the
+    // button that opened this screen count only once it has been released.
+    const selectPad = new MenuGamepad();
+    selectPad.reset();
 
     function selectFrame(): void {
         if (!selectRunning) return;
 
-        // Only gamepad 0 (P1) can navigate the player select screen
-        const p1gp = (navigator.getGamepads ? navigator.getGamepads() : [])[0] ?? null;
-        const prev0 = prevBtns[0] ?? [];
-        if (p1gp) {
-            const aPressed = (p1gp.buttons[0]?.pressed ?? false) || (p1gp.buttons[3]?.pressed ?? false);
-            const dLeft    = p1gp.buttons[14]?.pressed ?? false;
-            const dRight   = p1gp.buttons[15]?.pressed ?? false;
-            const dUp      = p1gp.buttons[12]?.pressed ?? false;
-            const dDown    = p1gp.buttons[13]?.pressed ?? false;
-            if (aPressed  && !(prev0[0] || prev0[3]))  confirmAndStart();
-            if ((dLeft && !prev0[14]) || (dRight && !prev0[15])) toggleMode();
-            if (dUp   && !prev0[12]) adjustCount(-1);
-            if (dDown && !prev0[13]) adjustCount(+1);
-            prevBtns[0] = Array.from(p1gp.buttons, b => b.pressed);
-        } else {
-            prevBtns[0] = [];
+        const pad = selectPad.poll();
+        if (pad.left || pad.right) toggleMode();
+        if (pad.up)   adjustCount(-1);
+        if (pad.down) adjustCount(+1);
+        if (pad.confirm) {
+            confirmAndStart();
+            if (!selectRunning) return;
         }
 
         Draw.playerSelectScreen(playerCount, controllerMode, connectedCount());
@@ -2015,24 +2030,23 @@ function drawStartMenu(ctx: CanvasRenderingContext2D, w: number): void {
     }
     ctx.fillStyle = '#555';
     ctx.font = `${Math.round(unit * 0.48)}px monospace`;
-    ctx.fillText('\u2191 \u2193 or swipe to choose - tap to confirm', cx, unit * 33.8);
+    // With online play gated off there is nothing to choose between, so the
+    // hint says what the single entry needs rather than how to move a cursor.
+    const hint = MENU_ITEMS.length > 1
+        ? '\u2191 \u2193 or swipe to choose - tap to confirm'
+        : 'tap to start';
+    ctx.fillText(hint, cx, unit * 33.8);
 }
 
 function startScreenLoop(): void {
     if (gameStarted) return;
 
-    // Poll only gamepad 0 (P1) for A button — other controllers don't advance the menu
-    const p1Gamepad = (navigator.getGamepads ? navigator.getGamepads() : [])[0] ?? null;
-    const aDown = (p1Gamepad?.buttons[0]?.pressed ?? false) || (p1Gamepad?.buttons[3]?.pressed ?? false);
-    if (aDown && !startScreenPrevA) handleMenuInteraction(true);
-    startScreenPrevA = aDown;
-
-    const dUp   = p1Gamepad?.buttons[12]?.pressed ?? false;
-    const dDown = p1Gamepad?.buttons[13]?.pressed ?? false;
-    if (dUp   && !startScreenPrevUp)   moveMenu(-1);
-    if (dDown && !startScreenPrevDown) moveMenu(1);
-    startScreenPrevUp   = dUp;
-    startScreenPrevDown = dDown;
+    // Any connected pad drives the menu: a lone Joy-Con, or a pad plugged in
+    // after another took slot 0, does not sit on gamepad index 0.
+    const pad = startScreenPad.poll();
+    if (pad.confirm) handleMenuInteraction(true);
+    if (pad.up)   moveMenu(-1);
+    if (pad.down) moveMenu(1);
 
     // Auto-play menu music after returning from a game (audio already unlocked)
     if (audioUnlocked && !menuMusicPlaying) {
