@@ -4,7 +4,7 @@ import type { Direction } from '../types';
 import type { ClientMessage, HostMessage, PeerInfo, RejectReason, Snapshot } from './Protocol';
 import { PROTOCOL_VERSION, decodeMessage, encodeMessage, isLobbyCode, localClientId } from './Protocol';
 import type { Transport, TransportFactory } from './Transport';
-import { trysteroTransport } from './Transport';
+import { lanTransport } from './Transport';
 
 export type JoinFailure = RejectReason | 'timeout' | 'bad-code' | 'host-left';
 
@@ -32,21 +32,20 @@ export interface NetClientOptions {
 }
 
 /**
- * How long to wait for a welcome before giving up. Signalling goes through
- * public relays and a fresh WebRTC connection is not instant, so this is long
- * enough to cover a slow handshake and short enough that a wrong code does not
- * look like a hang.
+ * How long to wait for a welcome before giving up. The server is on the same
+ * network and the host answers a hello at once, so a welcome that has not come
+ * in a few seconds is not coming: the code is wrong or the host is gone.
  */
-const WELCOME_TIMEOUT_MS = 20_000;
+const WELCOME_TIMEOUT_MS = 5_000;
 
 /**
  * Reconnection budget. The host holds a seat for 30 s, so give up a little
  * before that rather than succeeding into a seat that has just been freed.
- * Each attempt is a fresh room join, and a connection that is coming back
- * usually does so on the first or second.
+ * Each attempt is a fresh room join; on a LAN one either lands within a
+ * moment or the network is not back yet, so attempts are short and frequent.
  */
 const RECONNECT_WINDOW_MS = 28_000;
-const RECONNECT_ATTEMPT_MS = 5_000;
+const RECONNECT_ATTEMPT_MS = 2_000;
 
 /** The client half of a room: everything it knows, the host told it. */
 export class NetClient {
@@ -70,7 +69,7 @@ export class NetClient {
     constructor(options: NetClientOptions) {
         this.options = options;
         this.code = options.code;
-        this.newTransport = options.transport ?? trysteroTransport;
+        this.newTransport = options.transport ?? lanTransport;
 
         if (!isLobbyCode(options.code)) {
             this.closed = true;
@@ -85,7 +84,7 @@ export class NetClient {
     /** Join the room and wait to be welcomed. Used to connect and to reconnect. */
     private openRoom(welcomeTimeout: number): void {
         this.hostPeerId = null;
-        this.transport = this.newTransport(this.code);
+        this.transport = this.newTransport(this.code, { role: 'client', name: this.options.name });
 
         this.transport.onMessage = (raw, peerId) => {
             const msg = decodeMessage(raw);
@@ -128,10 +127,10 @@ export class NetClient {
     }
 
     /**
-     * The game noticing the host has gone quiet. WebRTC takes twelve seconds or
-     * more to report a dead connection, and the host only holds a seat for
-     * thirty, so waiting for the transport to admit it wastes most of the
-     * window a reconnection has to work with.
+     * The game noticing the host has gone quiet. A host whose tab closed is
+     * reported by the server at once, but one whose Wi-Fi dropped out takes it
+     * a few seconds to notice, and the host only holds a seat for thirty —
+     * silence is the sooner signal.
      */
     reportSilence(): void {
         this.connectionLost();
@@ -166,6 +165,7 @@ export class NetClient {
         this.transport.onMessage = null;
         this.transport.onPeerJoin = null;
         this.transport.onPeerLeave = null;
+        this.transport.onServerConnection = null;
         this.transport.leave();
         this.transport = null;
         this.hostPeerId = null;
@@ -229,6 +229,9 @@ export class NetClient {
                 break;
             case 'snap':
                 this.options.onSnapshot(msg);
+                break;
+            case 'end':
+                if (peerId === this.hostPeerId) this.fail('host-left');
                 break;
         }
     }

@@ -15,20 +15,6 @@ export const PROTOCOL_VERSION = 3;
 /** Seats in a room, host included. */
 export const MAX_PLAYERS = 4;
 
-/**
- * Namespaces the room. Two builds with different app ids never meet, even on
- * the same code — which is also why a code alone cannot be used to enumerate
- * games.
- */
-export const APP_ID = 'dot-maze';
-
-/**
- * The single Trystero action every message travels on. One channel keeps
- * ordering between a welcome and the snapshots that follow it; the envelope's
- * `t` field does the sorting.
- */
-export const NET_ACTION = 'net';
-
 /** Lobby codes are six digits: a million combinations, enterable on a d-pad. */
 export const CODE_LENGTH = 6;
 
@@ -40,7 +26,7 @@ const CLIENT_ID_KEY = 'dot-maze-client-id';
 
 /**
  * This browser's identity to a host, stable across reloads and reconnections.
- * Peer ids are not: Trystero mints a new one every session, so without this a
+ * Peer ids are not: the server mints a new one every connection, so without this a
  * player coming back looks like a stranger and their held seat is unreachable.
  */
 export function localClientId(): string {
@@ -58,9 +44,8 @@ export function localClientId(): string {
 }
 
 /**
- * `Math.random` is fine here: a code is not a secret, only an address. Guessing
- * one lands you in a stranger's co-op game, which is why it is six digits and
- * not four.
+ * `Math.random` is fine here: a code is not a secret, only an address, and on a
+ * LAN server it only has to tell apart the games on one network.
  */
 export function randomLobbyCode(): string {
     let code = '';
@@ -215,6 +200,14 @@ export interface LeaveMsg {
     t: 'leave';
 }
 
+/**
+ * The host closed the room. Additive: a client too old to know it drops the
+ * message and finds out the slow way, by the connection going quiet.
+ */
+export interface EndMsg {
+    t: 'end';
+}
+
 export interface SnapshotPlayer {
     id: number;
     x: number;
@@ -256,7 +249,7 @@ export interface Snapshot {
 }
 
 export type ClientMessage = HelloMsg | InputMsg | LeaveMsg;
-export type HostMessage   = WelcomeMsg | RejectMsg | RosterMsg | StartMsg | Snapshot;
+export type HostMessage   = WelcomeMsg | RejectMsg | RosterMsg | StartMsg | EndMsg | Snapshot;
 export type NetMessage    = ClientMessage | HostMessage;
 
 // ── Codec ─────────────────────────────────────────────────────────────────────
@@ -264,7 +257,7 @@ export type NetMessage    = ClientMessage | HostMessage;
 // 10 KB/s. A binary encoding quantising positions to 1/16 tile would reach
 // ~90 bytes if that ever matters.
 
-const MESSAGE_TAGS = new Set(['hello', 'welcome', 'reject', 'roster', 'start', 'input', 'leave', 'snap']);
+const MESSAGE_TAGS = new Set(['hello', 'welcome', 'reject', 'roster', 'start', 'input', 'leave', 'end', 'snap']);
 
 /** Positions are pixel-space (tile * 20); one decimal is 1/200th of a tile. */
 function round1(n: number): number {
