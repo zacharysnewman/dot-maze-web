@@ -6,7 +6,7 @@ import {
     decodeMessage, encodeMessage, isProtocolCompatible, randomLobbyCode,
 } from './Protocol';
 import type { Transport, TransportFactory } from './Transport';
-import { lanTransport } from './Transport';
+import { trysteroTransport } from './Transport';
 
 /** A seated remote player, from the host's side. */
 export interface HostSeat {
@@ -34,8 +34,6 @@ export interface NetHostOptions {
     onSeatConnectionChange?: (playerId: number, connected: boolean) => void;
     /** The latest state of the running game, for a returning player's welcome. */
     latestSnapshot?: () => Snapshot | null;
-    /** The link to the LAN server dropped or came back; nobody can join while it is down. */
-    onServerConnection?: (connected: boolean) => void;
     /** Overridable so the handshake can be exercised without a network. */
     transport?: TransportFactory;
 }
@@ -46,12 +44,13 @@ const HOST_PLAYER_ID = 1;
 /**
  * The host half of a room.
  *
- * The lobby code is the room id on the LAN server. The server lists rooms that
- * have a host in them, so a joiner on a network with one game going never needs
- * to type it; the code is there for the network with two.
+ * The lobby code *is* the room id, so there is no allocation step, no collision
+ * table and no TTL — and no way to enumerate active codes, since a joiner needs
+ * both the code and the app id.
  *
- * The topology is a star: clients talk to the host and to nobody else, through
- * the server's relay.
+ * The topology is a star: clients talk to the host and to nobody else. Trystero
+ * connects every peer in a room to every other, but nothing here sends
+ * client-to-client, so a full room is three connections rather than a mesh.
  */
 export class NetHost {
     readonly code: string;
@@ -74,8 +73,7 @@ export class NetHost {
         this.level = options.level;
         this.onRosterChange = options.onRosterChange;
 
-        this.transport = (options.transport ?? lanTransport)(this.code, { role: 'host', name: this.name });
-        this.transport.onServerConnection = (connected) => options.onServerConnection?.(connected);
+        this.transport = (options.transport ?? trysteroTransport)(this.code);
 
         this.transport.onMessage = (raw, peerId) => {
             const msg = decodeMessage(raw);
@@ -134,9 +132,9 @@ export class NetHost {
      * Notice clients that have gone quiet.
      *
      * Clients send a heartbeat several times a second, so silence means a tab
-     * switch or a connection in trouble. A closed tab is reported by the server
-     * at once, but a locked phone or a Wi-Fi dropout takes the server a few
-     * seconds to notice, and silence catches it sooner:
+     * switch or a connection in trouble. WebRTC takes ten seconds or more to
+     * admit a peer is gone, which is far too long to leave someone standing in
+     * a maze full of enemies, so silence is the faster signal:
      *
      * - briefly: let go of their controls, or they run at a wall until
      *   something kills them;
@@ -164,9 +162,6 @@ export class NetHost {
         for (const seat of this.seats.values()) {
             if (seat.releaseTimer !== null) clearTimeout(seat.releaseTimer);
         }
-        // Say so rather than just going: a client that only saw the connection
-        // drop would spend half a minute trying to reconnect to nobody.
-        if (this.seats.size > 0) this.sendTo({ t: 'end' });
         this.seats.clear();
         this.transport.leave();
     }

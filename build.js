@@ -5,6 +5,7 @@ const fs = require('fs');
 // rewritten to the hashed filename after every build.
 const ENTRIES = {
     bundle: { entry: 'src/Game.ts', page: 'index.html' },
+    peertest: { entry: 'src/net/PeerTest.ts', page: 'peer-test.html' },
 };
 
 // Clean old hashed bundles from dist/

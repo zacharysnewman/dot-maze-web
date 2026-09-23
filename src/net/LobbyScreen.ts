@@ -6,8 +6,6 @@ import type { PeerInfo } from './Protocol';
 export interface LobbyView {
     role: 'host' | 'client';
     code: string;
-    /** Where other players open the game — shown to the host, who has to tell them. */
-    shareUrl: string | null;
     roster: PeerInfo[];
     selfPlayerId: number;
     /** The map everyone is about to play. Joiners learn it from the welcome. */
@@ -54,31 +52,22 @@ export function drawLobbyScreen(view: LobbyView): void {
 
     ctx.fillStyle = 'yellow';
     ctx.font = `bold ${Math.round(unit * 1.3)}px monospace`;
-    ctx.fillText('LAN CO-OP', cx, unit * 2.5);
+    ctx.fillText('ONLINE CO-OP', cx, unit * 2.5);
 
-    if (view.role === 'host' && view.shareUrl !== null) {
-        // Where to go is what the others need first. Once they are there, JOIN
-        // finds this game on its own; the code only matters if there are two.
-        ctx.fillStyle = '#888';
-        ctx.font = `${Math.round(unit * 0.6)}px monospace`;
-        ctx.fillText('ON THE OTHER DEVICES OPEN', cx, unit * 4.6);
-        ctx.fillStyle = 'white';
-        ctx.font = `bold ${Math.round(unit * fitUrl(view.shareUrl))}px monospace`;
-        ctx.fillText(view.shareUrl.replace(/^http:\/\//, ''), cx, unit * 6.2);
+    ctx.fillStyle = '#888';
+    ctx.font = `${Math.round(unit * 0.6)}px monospace`;
+    ctx.fillText(view.role === 'host' ? 'YOUR LOBBY CODE' : 'LOBBY CODE', cx, unit * 5.5);
+
+    // The code is the whole point of the screen, so it gets the largest type on
+    // it — big enough to read across a room or off a phone held up to a camera.
+    ctx.fillStyle = 'white';
+    ctx.font = `bold ${Math.round(unit * 2.4)}px monospace`;
+    ctx.fillText(spaced(view.code), cx, unit * 8);
+
+    if (view.role === 'host') {
         ctx.fillStyle = '#666';
         ctx.font = `${Math.round(unit * 0.55)}px monospace`;
-        ctx.fillText('AND PICK JOIN LAN GAME - UP TO 3 CAN JOIN', cx, unit * 7.6);
-
-        ctx.fillStyle = '#888';
-        ctx.font = `${Math.round(unit * 0.55)}px monospace`;
-        ctx.fillText(`LOBBY CODE  ${spaced(view.code)}`, cx, unit * 9.8);
-    } else {
-        ctx.fillStyle = '#888';
-        ctx.font = `${Math.round(unit * 0.6)}px monospace`;
-        ctx.fillText('LOBBY CODE', cx, unit * 5.5);
-        ctx.fillStyle = 'white';
-        ctx.font = `bold ${Math.round(unit * 2.4)}px monospace`;
-        ctx.fillText(spaced(view.code), cx, unit * 8);
+        ctx.fillText('SHARE IT — UP TO 3 FRIENDS CAN JOIN', cx, unit * 10.3);
     }
 
     ctx.fillStyle = 'cyan';
@@ -122,11 +111,6 @@ export function drawLobbyScreen(view: LobbyView): void {
             : 'LEAVE  TAP/ESC/B',
         cx, unit * 33.4,
     );
-}
-
-/** Type size, in tiles, that fits an address across the lobby. */
-function fitUrl(url: string): number {
-    return Math.min(1.3, 24 / Math.max(1, url.length));
 }
 
 /** Long map names are the author's business; the lobby only has one line. */
@@ -259,18 +243,12 @@ function spaced(code: string): string {
 export interface CodeEntryOptions {
     onSubmit: (code: string) => void;
     onCancel: () => void;
-    /** The player started entering a code themselves. */
-    onType?: () => void;
 }
 
 export interface CodeEntry {
     /** Show a working state and refuse further submits until cleared. */
     setBusy: (message: string | null) => void;
     setError: (message: string | null) => void;
-    /** A note that neither blocks entry nor reads as a failure. */
-    setInfo: (message: string) => void;
-    /** Fill in a code chosen for the player, such as the only game on the network. */
-    setCode: (code: string) => void;
     close: () => void;
 }
 
@@ -301,7 +279,7 @@ export function showCodeEntry(options: CodeEntryOptions): CodeEntry {
     ].join(';');
 
     const title = document.createElement('div');
-    title.textContent = 'JOIN LAN GAME';
+    title.textContent = 'ENTER LOBBY CODE';
     title.style.cssText = 'font-size:28px;font-weight:bold;color:yellow;letter-spacing:4px';
 
     // Transparent, full-overlay input: any tap opens the keypad. inputMode
@@ -338,10 +316,10 @@ export function showCodeEntry(options: CodeEntryOptions): CodeEntry {
 
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:18px;color:#666;letter-spacing:2px;text-align:center;line-height:1.6';
-    hint.innerHTML = 'OR ENTER THE LOBBY CODE - TAP ANYWHERE TO TYPE<br>CONTROLLER: ◄ ► SLOT, ▲ ▼ DIGIT, A JOIN';
+    hint.innerHTML = 'TAP ANYWHERE TO TYPE<br>CONTROLLER: ◄ ► SLOT, ▲ ▼ DIGIT, A JOIN';
 
     const message = document.createElement('div');
-    message.style.cssText = 'font-size:20px;min-height:24px;max-width:90vw;text-align:center;letter-spacing:1px;line-height:1.5';
+    message.style.cssText = 'font-size:20px;min-height:24px;text-align:center;letter-spacing:1px';
 
     const buttons = document.createElement('div');
     // Wraps rather than overflowing: two buttons at this size are wider than a
@@ -376,7 +354,6 @@ export function showCodeEntry(options: CodeEntryOptions): CodeEntry {
     }
 
     function setDigitsFromInput(): void {
-        options.onType?.();
         const cleaned = input.value.replace(/[^0-9]/g, '').slice(0, CODE_LENGTH);
         input.value = cleaned;
         for (let i = 0; i < CODE_LENGTH; i++) digits[i] = cleaned[i] ?? '';
@@ -386,7 +363,6 @@ export function showCodeEntry(options: CodeEntryOptions): CodeEntry {
 
     function spinDigit(delta: number): void {
         if (busy) return;
-        options.onType?.();
         const current = digits[cursor] === '' ? -1 : Number(digits[cursor]);
         // An empty slot spins to 0 going up and 9 going down.
         const next = current < 0 ? (delta > 0 ? 0 : 9) : (current + delta + 10) % 10;
@@ -463,18 +439,6 @@ export function showCodeEntry(options: CodeEntryOptions): CodeEntry {
             showingError = text !== null;
             message.style.color = '#ff5555';
             message.textContent = text ?? '';
-            render();
-        },
-        setInfo(text: string): void {
-            if (busy) return;
-            showingError = false;
-            message.style.color = '#aaa';
-            message.textContent = text;
-        },
-        setCode(code: string): void {
-            input.value = code;
-            for (let i = 0; i < CODE_LENGTH; i++) digits[i] = code[i] ?? '';
-            cursor = CODE_LENGTH - 1;
             render();
         },
         close(): void {

@@ -4,15 +4,13 @@
   "scripts": {
     "build": "tsc --noEmit && node build.js",
     "dev": "esbuild src/Game.ts --bundle --outfile=dist/bundle.js --watch",
-    "typecheck": "tsc --noEmit",
-    "lan": "npm run build && node server/lan-server.js",
-    "lan:serve": "node server/lan-server.js"
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "ws": "^8.21.3"
+    "trystero": "^0.25.4"
   }
 }

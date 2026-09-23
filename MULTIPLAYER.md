@@ -1,16 +1,14 @@
-# MULTIPLAYER.md — LAN Co-op
+# MULTIPLAYER.md — Online Co-op
 
 ## Overview
 
-LAN co-op for 2–4 players on one network. One machine runs the LAN server
-(`npm run lan`), which serves the game and relays messages. One player hosts,
-runs the real simulation, and everyone else sends inputs and draws what the host
-reports. Co-op means nobody gains by cheating, so the host is trusted
+Online co-op for 2–4 players who join by typing a short lobby code. One player
+hosts, runs the real simulation, and everyone else sends inputs and draws what
+the host reports. Co-op means nobody gains by cheating, so the host is trusted
 absolutely and no validation is needed anywhere.
 
-Local play is untouched: without the LAN server the menu offers only
-`START GAME`, and the game runs exactly as it always has, with no network code
-on the path.
+Local play is untouched: with no code entered the game runs exactly as it does
+today, offline, with no network code on the path.
 
 ---
 
@@ -31,82 +29,58 @@ Death animations, level-clear sequencing and the dot-eating speed hiccup are all
 scheduled as `Time.addTimer` closures. On the host that is fine; nothing else
 ever needs to replay them.
 
-### LAN only, through a server on the LAN
+### Peer-to-peer, not a game server
 
-Multiplayer used to be internet play over WebRTC (Trystero), with public nostr
-relays for signalling and no TURN server. In practice it was flaky even with
-everyone in one room, for reasons that were never going to go away:
+Trystero gives WebRTC matchmaking with no server to run: the lobby code *is* the
+room ID, so code allocation, collision tables and TTLs simply do not exist. Game
+traffic goes peer-to-peer and never touches a metered service, and the project
+stays a pure static GitHub Pages deploy with no account, no deploy step and
+nothing to keep alive.
 
-- **Signalling ran over public relays on the internet.** Slow or dead relays
-  meant slow or failed joins, for a game whose players were on one Wi-Fi.
-- **WebRTC on a LAN is not a given.** Browsers hide local addresses behind mDNS
-  names that some networks and phones will not resolve, and the fallback —
-  reaching each other through the router's public address — needs hairpin NAT,
-  which many home routers do not do. Whether two devices connected depended on
-  the pair.
-- **Dead peers took 12 s+ to notice**, which is why so much of the silence and
-  presence machinery below exists.
+Trystero's default entry point signals over public **nostr** relays (the other
+strategies — MQTT, BitTorrent, Supabase, Firebase, IPFS — are separate imports,
+each a one-line swap). Signalling is only how peers find each other; once a
+connection is up, game traffic is direct.
 
-Now one machine runs `server/lan-server.js`. It does two things:
+The topology is a **star** — the three clients each connect to the host and to
+nobody else — which keeps peer connections to three and avoids the mesh
+scaling problems Trystero hits with many peers in one room.
 
-- **Serves the built game** over HTTP. Everyone loads the same build from the
-  same place, so version skew is close to impossible, and the menu's host/join
-  entries appear only when the page came from a LAN server (it answers
-  `/lan.json`).
-- **Relays messages** between the players in a room over WebSockets. It runs no
-  game logic; the host's browser is still the simulation. The relay mirrors
-  what the net code expected of a Trystero room — who is here, who arrived, who
-  left, send to one or to all — so `NetHost` and `NetClient` barely changed.
-  That was the point of the `Transport` seam.
+**The cost:** no TURN server, so players behind symmetric NAT or a strict
+corporate firewall (roughly 5–10% of connections) cannot connect at all, and
+there is no free fix — TURN relays real bandwidth.
 
-What that buys:
+`?relay=<url>` on the game's URL points **signalling** at a relay of your own
+instead of the public list — a private group's own relay, or a local one for
+testing. That fixes flaky or blocked relays, not NAT: signalling is only how
+peers find each other, and the connection is still direct.
 
-| | WebRTC over the internet | LAN server |
-|---|---|---|
-| Joining | Signal through public relays, then ICE; 1–20 s, sometimes never | One TCP connection to a known address; instant |
-| Device pairs that cannot connect | Some, depending on router and browser | None, if they can load the page |
-| A closed tab is noticed | 12 s+ | At once (socket close) |
-| A vanished device (Wi-Fi drop, locked phone) is noticed | 12 s+ | ~2–4 s (server pings every 2 s) |
-| Dependencies outside the room | Public relays, STUN | None — works with the internet down |
-| Bundle | +137 KB of Trystero | A few hundred lines of our own |
-
-**The cost:** someone needs a computer with Node to run the server — a phone
-cannot host the server, though it can host the game once the server is up. The
-page is plain `http://` on the LAN, which is not a secure context; the game uses
-nothing that needs one (Chrome still exposes gamepads there — checked on 141),
-but that is the thing to check if a browser ever stops.
-
-**Topology** is still a star: clients talk to the host and nobody else. Every
-message goes client → server → host, one extra LAN hop, well under a
-millisecond. Hosting from the server machine itself makes the host's hop
-loopback.
-
-**The host stays connected through blips.** The browser side of the transport
-(`lanTransport`) reopens a dropped socket by itself, 250 ms then doubling to
-2 s. Peers seen through the old socket are reported as leaving and everyone is
-reported as arriving again with new peer ids — which is exactly what a peer that
-left and came back looks like, so the host holds and restores seats, and
-clients greet the host again, through code that already existed. A server
-restart mid-game recovers the same way.
+For NAT itself, Trystero also speaks to a self-hosted WebSocket relay, which
+routes the traffic through a server and so sidesteps NAT entirely. That is one
+new implementation of the `Transport` interface and nothing else. A Cloudflare
+Worker + Durable Object is the natural home (bills inbound messages only, at
+20:1, outbound free — about 11 hours of play per day on the free tier).
+**Nothing below changes if the transport is swapped**: the host-authoritative
+design and the wire format are transport-agnostic by construction.
 
 ---
 
 ## Lobby codes
 
-**Six digits**, `000000`–`999999`, and every input device the game supports can
-enter digits. The code is the room id on the LAN server.
+**Six digits**, `000000`–`999999`. A million combinations, and every input
+device the game already supports can enter digits. 4 digits (10k) would collide
+rarely enough, but is small enough that a stranger could stumble into a game —
+cheating is not a concern, an uninvited fifth player still is.
 
-On a LAN it is mostly invisible. The server lists rooms that have a host in
-them, and **JOIN LAN GAME joins by itself when there is exactly one** — nobody
-should have to read six digits across a room to play with the person next to
-them. With none it keeps looking once a second, so a joiner can pick JOIN
-before the host is ready; with several it lists them by host name and code and
-the player types the one they want. Typing at any point stops the automatic
-search.
+The code is the Trystero room ID directly:
 
-The host's lobby leads with the address the other devices should open, since
-that is what they need first; the code sits below it for the network with two
-games on it.
+```ts
+const room = joinRoom({ appId: 'dot-maze' }, code);
+```
+
+The host generates a code and displays it. Clients type it. There is no
+allocation step and no way to enumerate active codes — a joiner needs the code
+and the app ID.
 
 ---
 
@@ -237,12 +211,11 @@ own out.
 | Event | Behaviour |
 |---|---|
 | Client goes quiet for 1 s | Held directions released — otherwise they run at a wall |
-| Client goes quiet for 8 s | Seat held, player sat out. A closed tab is reported at once; this catches a device that vanished |
+| Client goes quiet for 8 s | Seat held, player sat out. WebRTC needs 12 s+ to notice a closed tab |
 | Client drops | Seat held 30 s, keyed by a `clientId` in localStorage |
-| Client sees 6 s of silence | Rebuilds the connection itself, an attempt every 2 s for 28 s. A dropped host socket starts the same loop at once |
+| Client sees 6 s of silence | Stops waiting on WebRTC and rebuilds the connection itself, retrying for 28 s |
 | Client returns within 30 s | Same slot, and the running game arrives in the `welcome` — including every tile eaten so far, since a delta means nothing to someone who missed the ones before it. They sit out until the next level or life, like any player who was not there |
-| Host leaves or closes the tab | `{ t: 'end' }` to everyone, who return to the menu at once — there is no host migration |
-| Host's connection blips | Its socket reopens by itself; clients reconnect into their seats |
+| Host drops | Everyone returns to the menu — there is no host migration |
 | Host goes quiet | Clients say so over the frozen maze and stop predicting |
 | Tab backgrounded | Controls released on the way out, snapshot backlog dropped on the way back |
 
@@ -315,8 +288,7 @@ resolution-dependent drift.
 | File | Purpose |
 |---|---|
 | `src/net/Protocol.ts` | `PROTOCOL_VERSION`, message types, snapshot encode/decode |
-| `src/net/Transport.ts` | The one interface the net code needs from the network, and the LAN WebSocket implementation of it |
-| `server/lan-server.js` | The LAN server: serves the game, relays room messages |
+| `src/net/Transport.ts` | The one interface the net code needs from the network, and the Trystero implementation of it |
 | `src/net/NetHost.ts` | Room hosting, peer seating, snapshot broadcast, input intake |
 | `src/net/NetClient.ts` | Join, handshake, snapshot buffer, interpolation, apply-to-state |
 | `src/net/RemotePlayerInput.ts` | `PlayerInput` fed from the wire |
@@ -346,10 +318,10 @@ once pays for itself immediately.
 ```
 HOST                                        CLIENT
 ────                                        ──────
-Menu → Host LAN   
+Menu → Host Online
   ↓
 generate code, joinRoom(appId, code)
-  ↓                                         Menu → Join LAN → finds the room
+  ↓                                         Menu → Join Online → type code
 show code + roster                          joinRoom(appId, code)
   ↓                                           ↓
 onPeerJoin ←──────── {hello, protocol} ───────┘
@@ -582,33 +554,6 @@ saying `RECONNECTING...`, and it is back in the game by itself, with the dots
 it missed still eaten and enemies moving again; a host that closes for good
 leaves the client trying, and on the menu once the window runs out.
 
-### LAN only ✅
-
-Internet play is gone; see *LAN only, through a server on the LAN* above for why.
-
-- `server/lan-server.js` serves the game and relays messages; `npm run lan`
-  builds and starts it and prints the addresses to open.
-- `lanTransport` replaces Trystero behind the same `Transport` interface, plus
-  one addition: `onServerConnection`, so the host's lobby can say when it has
-  lost the server rather than silently being unjoinable.
-- JOIN finds the game on its own; the host's lobby shows the address to open.
-- **`{ t: 'end' }`** — the host says it is closing the room, on LEAVE and on the
-  tab going away, so clients go straight to the menu instead of spending 28
-  seconds reconnecting to nobody. Additive; no protocol bump.
-- Timings tightened for a LAN: 5 s to be welcomed (was 20), reconnect attempts
-  every 2 s (was 5).
-- Removed: Trystero, `?relay=`, `?multiplayer`, and the WebRTC diagnostics
-  (`net-test.html`, `peer-test.html`), which only measured the internet path.
-
-**Verified** with two browsers against the server: JOIN picked before anyone
-hosted waits, then joins as soon as the host opens a lobby; a client's input
-moves its player on the host; the host closing its tab returns the client to
-the menu within a second and a half; a client whose network drops for five
-seconds reconnects into its seat and matches the host frame for frame; and
-killing and restarting the server mid-game brings both host and client back
-into the running game by themselves. Static serving refuses anything outside
-the game's own files.
-
 ---
 
 ## Planned: couch co-op, and eight players
@@ -790,11 +735,11 @@ welcome already carries everything a latecomer needs.
 
 | Risk | Mitigation |
 |---|---|
-| Server machine's firewall blocks the port | The server prints its addresses; README says to allow Node on private networks |
-| Guest/isolated Wi-Fi keeps devices apart | Nothing the game can do; use a normal network or a phone hotspot |
-| A browser restricts an API to secure contexts over `http://` | Gamepads, audio and storage all work today; HTTPS with a local certificate is the fallback |
+| NAT traversal fails without TURN (~5–10%) | Documented limitation; escape hatch is a self-hosted relay, which the design already supports |
+| Public tracker flakiness or slow joins | Show a "connecting…" state; Trystero can try multiple strategies |
 | Version skew between cached tabs | `PROTOCOL_VERSION` in the handshake, refuse with a reload prompt |
 | Merge conflicts with editor work | Net code lives in `src/net/`; only `Game.ts` is shared. Land in small merges rather than one long-lived branch |
+| Trystero costs every player ~137 KB of bundle, offline play included | Acceptable gzipped; if it matters, a dynamic `import()` of `src/net/` keeps it off the local-play path, at the cost of an esbuild splitting step |
 
 ### Performance note
 
@@ -813,17 +758,16 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 ## Implementation Status
 
 All five phases are done, and so is automatic reconnection. Phases 6 to 8 —
-couch co-op alongside network play, up to eight players — are planned and not
-started. Multiplayer is LAN only, through `server/lan-server.js`.
+couch co-op alongside online play, up to eight players — are planned and not
+started. The relay fallback is still open, if NAT traversal proves too lossy in
+real use.
 
 | Feature | Status |
 |---|---|
 | Shared input-apply helper extracted | ✅ Complete — Keyboard, Gamepad and Touch |
 | `RemotePlayerInput` | ✅ Complete — driven by the debug loopback |
 | Protocol types, version, snapshot codec | ✅ Complete |
-| LAN server + WebSocket transport, host + client | ✅ Complete — behind the `Transport` seam; Trystero removed |
-| JOIN finds the game without a code | ✅ Complete — auto-joins the only room, waits for one, lists several |
-| Host closing the room tells clients | ✅ Complete — `end` message |
+| Trystero transport, host + client | ✅ Complete — behind a `Transport` seam |
 | Lobby screens and code entry | ✅ Complete |
 | Snapshot broadcast and apply | ✅ Complete |
 | Event-driven client audio | ✅ Complete |
@@ -846,6 +790,6 @@ started. Multiplayer is LAN only, through `server/lan-server.js`.
 | Room survives game over, host restarts from the lobby | ✅ Complete |
 | Host picks a library level before hosting | ✅ Complete — and between games, not only before the first |
 | Mid-level joining | ❌ Out of scope — joiners and returners wait for the next level |
-| Internet play | ❌ Removed — LAN only |
+| WebSocket relay fallback | ⬜ Deferred — only if NAT failures prove common |
 | Host migration | ❌ Out of scope — blocked by non-serialisable timers |
 | Anti-cheat / server validation | ❌ Out of scope — co-op, host is trusted |

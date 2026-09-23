@@ -40,8 +40,6 @@ import { NetEvents } from './net/NetEvents';
 import { InputSampler } from './net/InputSampler';
 import { ClientGame } from './net/ClientGame';
 import type { ConnectionState } from './net/NetClient';
-import type { LanInfo } from './net/Transport';
-import { fetchLanInfo, shareableUrl } from './net/Transport';
 import type { HostPhase, Snapshot } from './net/Protocol';
 import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, SNAPSHOT_HZ, tileIndex } from './net/Protocol';
 
@@ -1228,17 +1226,21 @@ let audioUnlocked = false;   // true after first user gesture (AudioContext crea
 let menuMusicPlaying = false; // true while menu music is actively playing
 let controllerActive = false; // true once any gamepad interaction is detected; never resets
 
+/**
+ * Online play is opt-in: the host/join entries exist only for a visitor who
+ * asked for them with ?multiplayer. Everyone else gets the local game alone,
+ * with no sign that anything else is there.
+ */
+const onlineEnabled = ((): boolean => {
+    const value = new URLSearchParams(window.location.search).get('multiplayer');
+    return value !== null && value !== 'false' && value !== '0';
+})();
+
 // Start-screen menu. 'play' is first so the long-standing flow — tap, tap, play
 // — reaches the same place it always did without touching the arrows.
-//
-// The host/join entries appear only when the page came from the LAN server
-// (`npm run lan`), found by asking it at startup. Anywhere else — the static
-// site, a file — there is nobody to play with, and nothing hints otherwise.
 type MenuItem = 'play' | 'host' | 'join';
-let MENU_ITEMS: readonly MenuItem[] = ['play'];
+const MENU_ITEMS: readonly MenuItem[] = onlineEnabled ? ['play', 'host', 'join'] : ['play'];
 let menuIndex = 0;
-/** What the LAN server said at startup; null when there is no server. */
-let lanInfo: LanInfo | null = null;
 
 // Online session state. Exactly one of netHost / netClient is set while a
 // lobby is up, and stays set through the game that lobby starts.
@@ -1443,15 +1445,10 @@ function startHosting(): void {
             if (player !== undefined) player.active = false;
         },
         latestSnapshot: () => (hostPhase === 'lobby' ? null : buildSnapshot(true)),
-        onServerConnection: (connected) => {
-            if (lobbyView === null) return;
-            lobbyView.error = connected ? null : 'LOST THE LAN SERVER - RECONNECTING...';
-        },
     });
     lobbyView = {
         role: 'host',
         code: netHost.code,
-        shareUrl: shareableUrl(lanInfo),
         roster: netHost.roster(),
         selfPlayerId: 1,
         mapName: hostLevel.name,
@@ -1461,114 +1458,71 @@ function startHosting(): void {
     enterLobby();
 }
 
-/** How often JOIN asks the server whether a game has been hosted yet. */
-const ROOM_POLL_MS = 1000;
-
 function startJoining(): void {
     gameStarted = true;
     let entry: CodeEntry | null = null;
-    // Finding a game is automatic until the player types or a join is under
-    // way; after that the code they chose is theirs.
-    let searching = true;
-    let pollTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const stopSearching = (): void => {
-        searching = false;
-        if (pollTimer !== null) clearTimeout(pollTimer);
-        pollTimer = null;
-    };
-
-    // On a network with one game going, JOIN simply joins it: nobody should
-    // have to read six digits across a room to play with the person next to
-    // them. With none yet, keep looking, so a joiner can pick JOIN before the
-    // host is ready. With several, the code says which.
-    const search = async (): Promise<void> => {
-        const info = await fetchLanInfo();
-        if (!searching || entry === null) return;
-        if (info === null) {
-            entry.setInfo('CAN\'T REACH THE LAN SERVER - RETRYING...');
-        } else if (info.rooms.length === 1) {
-            stopSearching();
-            submit(info.rooms[0].code);
-            return;
-        } else if (info.rooms.length === 0) {
-            entry.setInfo('NO GAME HOSTED YET - WAITING FOR A HOST...');
-        } else {
-            entry.setInfo(`${info.rooms.length} GAMES ON THIS NETWORK:  ${info.rooms.map(r => `${r.host} ${r.code}`).join('   ')}`);
-        }
-        pollTimer = setTimeout(() => { void search(); }, ROOM_POLL_MS);
-    };
-
-    const submit = (code: string): void => {
-        stopSearching();
-        entry?.setCode(code);
-        entry?.setBusy('CONNECTING...');
-        netClient = new NetClient({
-            code,
-            name: localPlayerName(),
-            onStart: (level) => { startClientGame(level); },
-            onSnapshot: (snapshot) => { applyClientSnapshot(snapshot); },
-            onConnectionState: (state) => {
-                clientConnection = state;
-                if (lobbyView === null) return;
-                lobbyView.status = state === 'reconnecting'
-                    ? 'RECONNECTING...'
-                    : 'WAITING FOR THE HOST TO START A NEW GAME';
-            },
-            onWelcome: (playerId, level, state) => {
-                entry?.close();
-                if (state !== null) {
-                    // A game is already running, so this is a player coming
-                    // back to a seat that was held for them. Straight into
-                    // the maze, no lobby in between.
-                    startClientGame(level, state);
-                    applyClientSnapshot(state);
-                    return;
-                }
-                lobbyView = {
-                    role: 'client',
-                    code,
-                    shareUrl: null,
-                    roster: netClient?.roster ?? [],
-                    selfPlayerId: playerId,
-                    mapName: level.name,
-                    status: 'WAITING FOR THE HOST...',
-                    error: null,
-                };
-                enterLobby();
-            },
-            onRosterChange: (roster, mapName) => {
-                if (lobbyView === null) return;
-                lobbyView.roster = roster;
-                if (mapName !== null) lobbyView.mapName = mapName;
-            },
-            onFailure: (failure) => {
-                netClient = null;
-                // Mid-game there is nothing left to watch, so the host
-                // leaving returns everyone to the menu. Once seated in a
-                // lobby the screen owns the message and its LEAVE button;
-                // before that, the code entry is still up and the player
-                // can simply retype.
-                if (clientRunning) leaveOnlineGame();
-                else if (lobbyView !== null) lobbyView.error = joinFailureText(failure);
-                else entry?.setError(joinFailureText(failure));
-            },
-        });
-    };
 
     entry = showCodeEntry({
-        onSubmit: submit,
-        onType: stopSearching,
+        onSubmit: (code) => {
+            entry?.setBusy('CONNECTING...');
+            netClient = new NetClient({
+                code,
+                name: localPlayerName(),
+                onStart: (level) => { startClientGame(level); },
+                onSnapshot: (snapshot) => { applyClientSnapshot(snapshot); },
+                onConnectionState: (state) => {
+                    clientConnection = state;
+                    if (lobbyView === null) return;
+                    lobbyView.status = state === 'reconnecting'
+                        ? 'RECONNECTING...'
+                        : 'WAITING FOR THE HOST TO START A NEW GAME';
+                },
+                onWelcome: (playerId, level, state) => {
+                    entry?.close();
+                    if (state !== null) {
+                        // A game is already running, so this is a player coming
+                        // back to a seat that was held for them. Straight into
+                        // the maze, no lobby in between.
+                        startClientGame(level, state);
+                        applyClientSnapshot(state);
+                        return;
+                    }
+                    lobbyView = {
+                        role: 'client',
+                        code,
+                        roster: netClient?.roster ?? [],
+                        selfPlayerId: playerId,
+                        mapName: level.name,
+                        status: 'WAITING FOR THE HOST...',
+                        error: null,
+                    };
+                    enterLobby();
+                },
+                onRosterChange: (roster, mapName) => {
+                    if (lobbyView === null) return;
+                    lobbyView.roster = roster;
+                    if (mapName !== null) lobbyView.mapName = mapName;
+                },
+                onFailure: (failure) => {
+                    netClient = null;
+                    // Mid-game there is nothing left to watch, so the host
+                    // leaving returns everyone to the menu. Once seated in a
+                    // lobby the screen owns the message and its LEAVE button;
+                    // before that, the code entry is still up and the player
+                    // can simply retype.
+                    if (clientRunning) leaveOnlineGame();
+                    else if (lobbyView !== null) lobbyView.error = joinFailureText(failure);
+                    else entry?.setError(joinFailureText(failure));
+                },
+            });
+        },
         onCancel: () => {
-            stopSearching();
             entry?.close();
             netClient?.leave();
             netClient = null;
             showStartScreen();
         },
     });
-    entry.setInfo('LOOKING FOR A GAME ON THIS NETWORK...');
-    void search();
 }
 
 function joinFailureText(failure: JoinFailure): string {
@@ -1576,7 +1530,7 @@ function joinFailureText(failure: JoinFailure): string {
         case 'protocol':    return 'DIFFERENT GAME VERSION - RELOAD THE PAGE';
         case 'full':        return 'THAT GAME IS FULL';
         case 'in-progress': return 'THAT GAME HAS ALREADY STARTED';
-        case 'timeout':     return 'NO GAME ANSWERED ON THAT CODE';
+        case 'timeout':     return 'NO GAME FOUND WITH THAT CODE';
         case 'bad-code':    return 'CODES ARE SIX DIGITS';
         case 'host-left':   return 'THE HOST LEFT';
     }
@@ -1920,7 +1874,6 @@ function returnClientToLobby(): void {
     lobbyView = {
         role: 'client',
         code: netClient.code,
-        shareUrl: null,
         roster: netClient.roster,
         selfPlayerId: netClient.playerId,
         mapName: netClient.level?.name ?? '',
@@ -2062,8 +2015,8 @@ function playerSelectLoop(): void {
 
 const MENU_LABELS: Record<MenuItem, string> = {
     play: 'START GAME',
-    host: 'HOST LAN GAME',
-    join: 'JOIN LAN GAME',
+    host: 'HOST ONLINE',
+    join: 'JOIN ONLINE',
 };
 
 function drawStartMenu(ctx: CanvasRenderingContext2D, w: number): void {
@@ -2077,7 +2030,7 @@ function drawStartMenu(ctx: CanvasRenderingContext2D, w: number): void {
     }
     ctx.fillStyle = '#555';
     ctx.font = `${Math.round(unit * 0.48)}px monospace`;
-    // Without a LAN server there is nothing to choose between, so the
+    // With online play gated off there is nothing to choose between, so the
     // hint says what the single entry needs rather than how to move a cursor.
     const hint = MENU_ITEMS.length > 1
         ? '\u2191 \u2193 or swipe to choose - tap to confirm'
@@ -2446,11 +2399,6 @@ window.onload = function () {
         }
     });
 
-    // A host closing or reloading the tab ends the room for good — a new page
-    // is a new lobby — so tell the clients now rather than leave them trying
-    // to reconnect to it for half a minute.
-    window.addEventListener('pagehide', () => { netHost?.close(); });
-
     document.onkeydown = menuKeyHandler;
     document.addEventListener('click', () => handleMenuInteraction());
 
@@ -2469,10 +2417,4 @@ window.onload = function () {
     }, { passive: false } as EventListenerOptions);
 
     startScreenLoop();
-
-    void fetchLanInfo().then((info) => {
-        if (info === null) return;
-        lanInfo = info;
-        MENU_ITEMS = ['play', 'host', 'join'];
-    });
 };
