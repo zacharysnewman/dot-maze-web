@@ -554,6 +554,45 @@ saying `RECONNECTING...`, and it is back in the game by itself, with the dots
 it missed still eaten and enemies moving again; a host that closes for good
 leaves the client trying, and on the menu once the window runs out.
 
+### Joining that does not stall ✅
+
+Players on one Wi-Fi reported joins that took ages or failed. The direct
+connection was not the problem — on one network it is a host candidate and
+works — so the fixes are all in how two devices find each other.
+
+- **Eleven signalling relays instead of five** (`SIGNALLING_RELAYS` in
+  `src/net/Transport.ts`). Trystero derived five from the app id out of its
+  list of small public relays — a Raspberry Pi and a "testrelay" among them —
+  so every game depended on the same five being up. Now six large,
+  long-running relays come first, and the old five are kept, pinned, so a
+  device on an older build still meets a host on this one. Two devices meet if
+  any one relay works for both; a relay that refuses Trystero's events is
+  retired by Trystero on the spot.
+- **Joins retry instead of waiting.** Trystero announces a newcomer in a burst
+  over its first second or so, then once a minute. A missed burst therefore
+  meant sitting out the minute — past the old 20 s timeout. The client now
+  leaves and rejoins every 8 s, each time with a fresh burst, for up to 30 s.
+- **Rejoining a code no longer gets the room that is leaving.** Trystero's
+  `leave()` takes a tenth of a second before it forgets a room, and a
+  `joinRoom` on the same code in that window hands back the departing room,
+  which then finishes leaving under the new join. Reconnection did exactly
+  that — leave, rejoin at once — so an attempt was spent in a dead room before
+  the next one got a live one. A join now waits for the previous leave of its
+  code. Measured against a local relay with the host frozen for 7 s: back in
+  the game as the host recovers, where before it took another 4 s.
+
+**Verified** in two browsers against a local nostr relay (the public ones are
+unreachable from the test environment) that drops each device's first 3 s of
+announcements: the first join attempt finds nobody, the retry at 8 s is seated
+a second later. A host frozen mid-game shows WAITING, then RECONNECTING, and
+the client is back in the running game when it recovers. Choosing the public
+relays themselves is untested from here — `peer-test.html` on real devices is
+the check.
+- **The screen says what a join is waiting on**: matchmaking (no relay
+  reachable), looking for the host, or which retry it is on. A host's lobby
+  says CONNECTING TO MATCHMAKING while it has no relay open, rather than
+  WAITING FOR PLAYERS over a lobby nobody can find.
+
 ---
 
 ## Planned: couch co-op, and eight players
@@ -736,7 +775,7 @@ welcome already carries everything a latecomer needs.
 | Risk | Mitigation |
 |---|---|
 | NAT traversal fails without TURN (~5–10%) | Documented limitation; escape hatch is a self-hosted relay, which the design already supports |
-| Public tracker flakiness or slow joins | Show a "connecting…" state; Trystero can try multiple strategies |
+| Public relay flakiness or slow joins | Eleven relays, joins retried every 8 s, progress on screen — see *Joining that does not stall* |
 | Version skew between cached tabs | `PROTOCOL_VERSION` in the handshake, refuse with a reload prompt |
 | Merge conflicts with editor work | Net code lives in `src/net/`; only `Game.ts` is shared. Land in small merges rather than one long-lived branch |
 | Trystero costs every player ~137 KB of bundle, offline play included | Acceptable gzipped; if it matters, a dynamic `import()` of `src/net/` keeps it off the local-play path, at the cost of an esbuild splitting step |

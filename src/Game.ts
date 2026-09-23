@@ -40,6 +40,7 @@ import { NetEvents } from './net/NetEvents';
 import { InputSampler } from './net/InputSampler';
 import { ClientGame } from './net/ClientGame';
 import type { ConnectionState } from './net/NetClient';
+import { openRelayCount } from './net/Transport';
 import type { HostPhase, Snapshot } from './net/Protocol';
 import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, SNAPSHOT_HZ, tileIndex } from './net/Protocol';
 
@@ -1465,6 +1466,20 @@ function startJoining(): void {
     entry = showCodeEntry({
         onSubmit: (code) => {
             entry?.setBusy('CONNECTING...');
+            // Say what the join is waiting on, so a slow one reads as progress
+            // and a stuck one says where it is stuck.
+            const progress = setInterval(() => {
+                if (netClient === null || lobbyView !== null || clientRunning) {
+                    clearInterval(progress);
+                    return;
+                }
+                const relays = openRelayCount();
+                entry?.setBusy(relays === 0
+                    ? 'CONNECTING TO MATCHMAKING...'
+                    : netClient.joinAttempt <= 1
+                        ? 'LOOKING FOR THE HOST...'
+                        : `STILL LOOKING - TRY ${netClient.joinAttempt}`);
+            }, 250);
             netClient = new NetClient({
                 code,
                 name: localPlayerName(),
@@ -1504,6 +1519,7 @@ function startJoining(): void {
                     if (mapName !== null) lobbyView.mapName = mapName;
                 },
                 onFailure: (failure) => {
+                    clearInterval(progress);
                     netClient = null;
                     // Mid-game there is nothing left to watch, so the host
                     // leaving returns everyone to the menu. Once seated in a
@@ -1518,6 +1534,7 @@ function startJoining(): void {
         },
         onCancel: () => {
             entry?.close();
+            entry = null;
             netClient?.leave();
             netClient = null;
             showStartScreen();
@@ -1657,7 +1674,10 @@ function lobbyFrame(): void {
     }
     lobbyPrevPad = pressed;
 
-    drawLobbyScreen(lobbyView);
+    // A host with no relay connection is a lobby nobody can find. Say so rather
+    // than showing WAITING FOR PLAYERS over a room that cannot be joined.
+    const findable = lobbyView.role !== 'host' || openRelayCount() > 0;
+    drawLobbyScreen(findable ? lobbyView : { ...lobbyView, status: 'CONNECTING TO MATCHMAKING...' });
     window.requestAnimationFrame(lobbyFrame);
 }
 

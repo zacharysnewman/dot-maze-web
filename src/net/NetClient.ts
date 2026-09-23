@@ -32,12 +32,18 @@ export interface NetClientOptions {
 }
 
 /**
- * How long to wait for a welcome before giving up. Signalling goes through
- * public relays and a fresh WebRTC connection is not instant, so this is long
- * enough to cover a slow handshake and short enough that a wrong code does not
- * look like a hang.
+ * Joining is retried rather than waited out. Trystero announces a new arrival
+ * to the relays in a quick burst over its first second or two and then only
+ * once a minute, so if that burst is missed — a relay slow to connect, a
+ * subscription not yet live on the host's side — one long wait just sits
+ * through the minute-long gap. Leaving and rejoining the room starts a fresh
+ * burst. An attempt is long enough for signalling plus a WebRTC handshake on
+ * one network, which takes a second or two when it works at all.
+ *
+ * The window is how long a wrong code takes to be reported as one.
  */
-const WELCOME_TIMEOUT_MS = 20_000;
+const JOIN_ATTEMPT_MS = 8_000;
+const JOIN_WINDOW_MS = 30_000;
 
 /**
  * Reconnection budget. The host holds a seat for 30 s, so give up a little
@@ -62,6 +68,10 @@ export class NetClient {
     private seq = 0;
     /** When the connection was lost; 0 while it is up. */
     private lostAt = 0;
+    /** When the first join began, for the join window. */
+    private joinStartedAt = 0;
+    /** Which attempt at joining this is, from 1, for the screen to show. */
+    joinAttempt = 0;
 
     playerId = 0;
     roster: PeerInfo[] = [];
@@ -79,12 +89,14 @@ export class NetClient {
             return;
         }
 
-        this.openRoom(WELCOME_TIMEOUT_MS);
+        this.joinStartedAt = performance.now();
+        this.openRoom(JOIN_ATTEMPT_MS);
     }
 
     /** Join the room and wait to be welcomed. Used to connect and to reconnect. */
     private openRoom(welcomeTimeout: number): void {
         this.hostPeerId = null;
+        this.joinAttempt++;
         this.transport = this.newTransport(this.code);
 
         this.transport.onMessage = (raw, peerId) => {
@@ -110,9 +122,18 @@ export class NetClient {
 
         this.clearWelcomeTimer();
         this.welcomeTimer = setTimeout(() => {
-            if (this.lostAt === 0) this.fail('timeout');
-            else this.tryAgain();
+            if (this.lostAt !== 0) this.tryAgain();
+            else if (performance.now() - this.joinStartedAt >= JOIN_WINDOW_MS) this.fail('timeout');
+            else this.retryJoin();
         }, welcomeTimeout);
+    }
+
+    /** Not welcomed yet: go round again, with a fresh announcement burst. */
+    private retryJoin(): void {
+        if (this.closed) return;
+        this.dropRoom();
+        const left = JOIN_WINDOW_MS - (performance.now() - this.joinStartedAt);
+        this.openRoom(Math.min(JOIN_ATTEMPT_MS, Math.max(left, 1_000)));
     }
 
     /** True while the connection is down and being rebuilt. */
