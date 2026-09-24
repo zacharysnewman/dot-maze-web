@@ -11,6 +11,8 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "jsqr": "^1.4.0",
+    "qrcode-generator": "^2.0.4",
     "trystero": "^0.25.4"
   }
 }

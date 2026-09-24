@@ -5,6 +5,8 @@ import type { ClientMessage, HostMessage, PeerInfo, RejectReason, Snapshot } fro
 import { PROTOCOL_VERSION, decodeMessage, encodeMessage, isLobbyCode, localClientId } from './Protocol';
 import type { Transport, TransportFactory } from './Transport';
 import { trysteroTransport } from './Transport';
+import type { ClientPairing } from './Pairing';
+import { combineTransports } from './Pairing';
 
 export type JoinFailure = RejectReason | 'timeout' | 'bad-code' | 'host-left';
 
@@ -29,6 +31,12 @@ export interface NetClientOptions {
     onConnectionState?: (state: ConnectionState) => void;
     /** Overridable so the handshake can be exercised without a network. */
     transport?: TransportFactory;
+    /**
+     * A connection being set up by QR code, raced against the relays. Whichever
+     * reaches the host first is used. With one, joining never times out: it is
+     * waiting on the host to scan a code, which takes as long as it takes.
+     */
+    pairing?: ClientPairing;
 }
 
 /**
@@ -80,7 +88,11 @@ export class NetClient {
     constructor(options: NetClientOptions) {
         this.options = options;
         this.code = options.code;
-        this.newTransport = options.transport ?? trysteroTransport;
+        const relays = options.transport ?? trysteroTransport;
+        const pairing = options.pairing;
+        this.newTransport = pairing === undefined
+            ? relays
+            : (code) => combineTransports({ r: relays(code), q: pairing.attach() }, true);
 
         if (!isLobbyCode(options.code)) {
             this.closed = true;
@@ -123,7 +135,8 @@ export class NetClient {
         this.clearWelcomeTimer();
         this.welcomeTimer = setTimeout(() => {
             if (this.lostAt !== 0) this.tryAgain();
-            else if (performance.now() - this.joinStartedAt >= JOIN_WINDOW_MS) this.fail('timeout');
+            else if (this.options.pairing === undefined
+                && performance.now() - this.joinStartedAt >= JOIN_WINDOW_MS) this.fail('timeout');
             else this.retryJoin();
         }, welcomeTimeout);
     }
@@ -132,7 +145,10 @@ export class NetClient {
     private retryJoin(): void {
         if (this.closed) return;
         this.dropRoom();
-        const left = JOIN_WINDOW_MS - (performance.now() - this.joinStartedAt);
+        // Waiting on a QR scan has no deadline, so every attempt is a full one.
+        const left = this.options.pairing !== undefined
+            ? JOIN_ATTEMPT_MS
+            : JOIN_WINDOW_MS - (performance.now() - this.joinStartedAt);
         this.openRoom(Math.min(JOIN_ATTEMPT_MS, Math.max(left, 1_000)));
     }
 

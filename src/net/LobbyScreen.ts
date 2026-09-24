@@ -1,6 +1,7 @@
 import { unit } from '../constants';
 import { gameState } from '../game-state';
 import { CODE_LENGTH, MAX_PLAYERS, isLobbyCode } from './Protocol';
+import { qrCanvas } from './QrCode';
 import type { PeerInfo } from './Protocol';
 
 export interface LobbyView {
@@ -18,6 +19,7 @@ export interface LobbyView {
 const LEAVE_BUTTON = { x: 9, y: 30, w: 10, h: 2.6 };
 const START_BUTTON = { x: 8, y: 26.4, w: 12, h: 2.6 };
 const MAP_BUTTON   = { x: 8, y: 22.5, w: 12, h: 1.9 };
+const QR_BUTTON    = { x: 8, y: 9.5, w: 12, h: 1.9 };
 
 interface Rect { x: number; y: number; w: number; h: number }
 
@@ -37,6 +39,10 @@ export function hitsStartButton(canvasX: number, canvasY: number): boolean {
 
 export function hitsMapButton(canvasX: number, canvasY: number): boolean {
     return hits(MAP_BUTTON, canvasX, canvasY);
+}
+
+export function hitsQrButton(canvasX: number, canvasY: number): boolean {
+    return hits(QR_BUTTON, canvasX, canvasY);
 }
 
 export function drawLobbyScreen(view: LobbyView): void {
@@ -65,9 +71,10 @@ export function drawLobbyScreen(view: LobbyView): void {
     ctx.fillText(spaced(view.code), cx, unit * 8);
 
     if (view.role === 'host') {
-        ctx.fillStyle = '#666';
-        ctx.font = `${Math.round(unit * 0.55)}px monospace`;
-        ctx.fillText('SHARE IT — UP TO 3 FRIENDS CAN JOIN', cx, unit * 10.3);
+        // Scanning is the easy way in: a phone's camera opens the game already
+        // joining, and it works with no internet too. The code stays above it
+        // for anyone who would rather type.
+        drawButton(ctx, QR_BUTTON, 'SHOW JOIN QR', 'yellow');
     }
 
     ctx.fillStyle = 'cyan';
@@ -107,7 +114,7 @@ export function drawLobbyScreen(view: LobbyView): void {
     ctx.font = `${Math.round(unit * 0.5)}px monospace`;
     ctx.fillText(
         view.role === 'host'
-            ? 'START  TAP/ENTER/A     MAP  TAP/M/Y     LEAVE  TAP/ESC/B'
+            ? 'START ENTER/A   QR Q/X   MAP M/Y   LEAVE ESC/B'
             : 'LEAVE  TAP/ESC/B',
         cx, unit * 33.4,
     );
@@ -243,6 +250,8 @@ function spaced(code: string): string {
 export interface CodeEntryOptions {
     onSubmit: (code: string) => void;
     onCancel: () => void;
+    /** Read the host's QR code with the camera instead of typing. */
+    onScan?: () => void;
 }
 
 export interface CodeEntry {
@@ -316,7 +325,8 @@ export function showCodeEntry(options: CodeEntryOptions): CodeEntry {
 
     const hint = document.createElement('div');
     hint.style.cssText = 'font-size:18px;color:#666;letter-spacing:2px;text-align:center;line-height:1.6';
-    hint.innerHTML = 'TAP ANYWHERE TO TYPE<br>CONTROLLER: ◄ ► SLOT, ▲ ▼ DIGIT, A JOIN';
+    hint.innerHTML = 'TAP ANYWHERE TO TYPE<br>CONTROLLER: ◄ ► SLOT, ▲ ▼ DIGIT, A JOIN'
+        + (options.onScan !== undefined ? ', X SCAN' : '');
 
     const message = document.createElement('div');
     message.style.cssText = 'font-size:20px;min-height:24px;text-align:center;letter-spacing:1px';
@@ -327,8 +337,10 @@ export function showCodeEntry(options: CodeEntryOptions): CodeEntry {
     buttons.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:center;gap:16px;position:relative;z-index:1';
 
     const joinBtn = makeButton('JOIN');
+    const scanBtn = makeButton('SCAN QR');
     const cancelBtn = makeButton('CANCEL');
-    buttons.append(joinBtn, cancelBtn);
+    buttons.append(joinBtn, ...(options.onScan !== undefined ? [scanBtn] : []), cancelBtn);
+    scanBtn.onclick = (e) => { e.stopPropagation(); if (!busy) options.onScan?.(); };
 
     function currentCode(): string {
         return digits.join('');
@@ -405,6 +417,7 @@ export function showCodeEntry(options: CodeEntryOptions): CodeEntry {
             if (rising(13)) spinDigit(-1);
             if (rising(0))  submit();
             if (rising(1))  options.onCancel();
+            if (rising(2) && !busy) options.onScan?.();
             prev = pressed;
         } else {
             prev = [];
@@ -458,4 +471,203 @@ function makeButton(label: string): HTMLButtonElement {
         'border-radius:8px;padding:14px 30px;cursor:pointer;letter-spacing:2px',
     ].join(';');
     return btn;
+}
+
+// ── QR screens ────────────────────────────────────────────────────────────────
+
+/** Big enough to scan from arm's length off a laptop, and to fit a phone. */
+function qrSizePx(): number {
+    return Math.round(Math.min(window.innerWidth * 0.8, window.innerHeight * 0.5, 520) * (window.devicePixelRatio || 1));
+}
+
+function overlayBase(): HTMLDivElement {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = [
+        'position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.97)',
+        'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px',
+        'font-family:monospace;color:white;padding:16px;box-sizing:border-box;overflow-y:auto',
+    ].join(';');
+    overlay.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+    overlay.addEventListener('touchend', (e) => e.stopPropagation(), { passive: true });
+    overlay.addEventListener('click', (e) => e.stopPropagation());
+    return overlay;
+}
+
+function textLine(size: number, color: string): HTMLDivElement {
+    const el = document.createElement('div');
+    el.style.cssText = `font-size:${size}px;color:${color};letter-spacing:2px;text-align:center;max-width:92vw;line-height:1.45`;
+    return el;
+}
+
+function qrHolder(): HTMLDivElement {
+    const holder = document.createElement('div');
+    holder.style.cssText = 'width:min(80vw,50vh,520px);aspect-ratio:1;display:flex;align-items:center;justify-content:center;background:white;border-radius:8px';
+    return holder;
+}
+
+function setQr(holder: HTMLDivElement, url: string | null): void {
+    holder.replaceChildren();
+    if (url === null) return;
+    const canvas = qrCanvas(url, qrSizePx());
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    holder.appendChild(canvas);
+}
+
+/** Poll every pad for rising edges on a few buttons while an overlay is up. */
+function padButtons(isOpen: () => boolean, handlers: Record<number, () => void>): void {
+    let prev: boolean[] = [];
+    const poll = (): void => {
+        if (!isOpen()) return;
+        const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()) : [];
+        const pressed: boolean[] = [];
+        for (const pad of pads) pad?.buttons.forEach((b, i) => { pressed[i] = (pressed[i] ?? false) || b.pressed; });
+        for (const [index, handler] of Object.entries(handlers)) {
+            const i = Number(index);
+            if ((pressed[i] ?? false) && !(prev[i] ?? false)) handler();
+        }
+        prev = pressed;
+        window.requestAnimationFrame(poll);
+    };
+    poll();
+}
+
+export interface HostQrScreen {
+    /** The link the QR code carries — updated as offers are used up. */
+    setLink: (url: string) => void;
+    setStatus: (text: string, isError?: boolean) => void;
+    close: () => void;
+}
+
+export interface HostQrOptions {
+    code: string;
+    link: string;
+    status: string;
+    onScanReply: () => void;
+    onClose: () => void;
+}
+
+/**
+ * The host's invitation: one QR code that works either way. Scanned with
+ * internet, the joiner is in by itself. Scanned without, the joiner's screen
+ * shows a reply code, and SCAN REPLY reads it here without leaving the game.
+ */
+export function showHostQr(options: HostQrOptions): HostQrScreen {
+    let closed = false;
+    const overlay = overlayBase();
+
+    const title = textLine(26, 'yellow');
+    title.style.fontWeight = 'bold';
+    title.textContent = 'SCAN TO JOIN';
+
+    const holder = qrHolder();
+    setQr(holder, options.link);
+
+    const code = textLine(18, '#888');
+    code.textContent = `OR ENTER CODE  ${options.code.split('').join(' ')}`;
+
+    const status = textLine(18, '#aaa');
+    status.textContent = options.status;
+
+    const help = textLine(15, '#777');
+    help.innerHTML = 'NO INTERNET? THE JOINER\'S SCREEN WILL SHOW A REPLY CODE.<br>TAP SCAN REPLY AND POINT THIS CAMERA AT IT.';
+
+    const buttons = document.createElement('div');
+    buttons.style.cssText = 'display:flex;flex-wrap:wrap;justify-content:center;gap:14px';
+    const scanBtn = makeButton('SCAN REPLY');
+    const doneBtn = makeButton('DONE');
+    buttons.append(scanBtn, doneBtn);
+    scanBtn.onclick = (e) => { e.stopPropagation(); options.onScanReply(); };
+    doneBtn.onclick = (e) => { e.stopPropagation(); options.onClose(); };
+
+    const keys = (e: KeyboardEvent): void => {
+        if (document.body.lastElementChild !== overlay) return; // the scanner is on top
+        if (e.key === 'Escape' || e.key === 'Enter' || e.key === 'q' || e.key === 'Q') { e.preventDefault(); e.stopPropagation(); options.onClose(); }
+        else if (e.key === 's' || e.key === 'S') { e.preventDefault(); e.stopPropagation(); options.onScanReply(); }
+    };
+    window.addEventListener('keydown', keys, true);
+    padButtons(() => !closed, {
+        0: () => { if (document.body.lastElementChild === overlay) options.onClose(); },
+        1: () => { if (document.body.lastElementChild === overlay) options.onClose(); },
+        2: () => { if (document.body.lastElementChild === overlay) options.onScanReply(); },
+    });
+
+    overlay.append(title, holder, code, status, help, buttons);
+    document.body.appendChild(overlay);
+
+    return {
+        setLink: (url) => { if (!closed) setQr(holder, url); },
+        setStatus: (text, isError = false) => {
+            status.textContent = text;
+            status.style.color = isError ? '#ff5555' : '#aaa';
+        },
+        close: () => {
+            if (closed) return;
+            closed = true;
+            window.removeEventListener('keydown', keys, true);
+            overlay.remove();
+        },
+    };
+}
+
+export interface JoiningScreen extends CodeEntry {
+    /** Show the reply code for the host to scan, when there is no internet to carry it. */
+    showReply: (url: string) => void;
+}
+
+/**
+ * What a joiner sees after scanning the host's code: progress, and — if the
+ * relays cannot carry the connection — a reply code for the host to scan back.
+ */
+export function showJoiningScreen(onCancel: () => void): JoiningScreen {
+    let closed = false;
+    const overlay = overlayBase();
+
+    const title = textLine(26, 'yellow');
+    title.style.fontWeight = 'bold';
+    title.textContent = 'JOINING';
+
+    const message = textLine(19, '#aaa');
+    message.textContent = 'CONNECTING...';
+
+    const replyWrap = document.createElement('div');
+    replyWrap.style.cssText = 'display:none;flex-direction:column;align-items:center;gap:10px';
+    const replyHint = textLine(16, '#ccc');
+    replyHint.innerHTML = 'NO INTERNET? SHOW THIS TO THE HOST.<br>THEY TAP SCAN REPLY ON THEIR QR SCREEN.';
+    const holder = qrHolder();
+    replyWrap.append(replyHint, holder);
+
+    const cancel = makeButton('CANCEL');
+    cancel.onclick = (e) => { e.stopPropagation(); onCancel(); };
+    const keys = (e: KeyboardEvent): void => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); }
+    };
+    window.addEventListener('keydown', keys, true);
+    padButtons(() => !closed, { 1: onCancel });
+
+    overlay.append(title, message, replyWrap, cancel);
+    document.body.appendChild(overlay);
+
+    return {
+        setBusy: (text) => {
+            if (text === null) return;
+            message.style.color = '#aaa';
+            message.textContent = text;
+        },
+        setError: (text) => {
+            message.style.color = '#ff5555';
+            message.textContent = text ?? '';
+            replyWrap.style.display = 'none';
+        },
+        showReply: (url) => {
+            setQr(holder, url);
+            replyWrap.style.display = 'flex';
+        },
+        close: () => {
+            if (closed) return;
+            closed = true;
+            window.removeEventListener('keydown', keys, true);
+            overlay.remove();
+        },
+    };
 }
