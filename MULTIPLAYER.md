@@ -1,14 +1,15 @@
-# MULTIPLAYER.md — Online Co-op
+# MULTIPLAYER.md — LAN Co-op
 
 ## Overview
 
-Online co-op for 2–4 players who join by typing a short lobby code. One player
-hosts, runs the real simulation, and everyone else sends inputs and draws what
-the host reports. Co-op means nobody gains by cheating, so the host is trusted
+LAN co-op for 2–4 players on the same Wi-Fi, joined by scanning QR codes — no
+internet, no server, no accounts, any browser. One player hosts, runs the real
+simulation, and everyone else sends inputs and draws what the host reports.
+Co-op means nobody gains by cheating, so the host is trusted
 absolutely and no validation is needed anywhere.
 
-Local play is untouched: with no code entered the game runs exactly as it does
-today, offline, with no network code on the path.
+Local play is untouched: nobody hosting means the game runs exactly as it
+always has, with no network code on the path.
 
 ---
 
@@ -29,58 +30,82 @@ Death animations, level-clear sequencing and the dot-eating speed hiccup are all
 scheduled as `Time.addTimer` closures. On the host that is fine; nothing else
 ever needs to replay them.
 
-### Peer-to-peer, not a game server
+### LAN only, paired by QR code
 
-Trystero gives WebRTC matchmaking with no server to run: the lobby code *is* the
-room ID, so code allocation, collision tables and TTLs simply do not exist. Game
-traffic goes peer-to-peer and never touches a metered service, and the project
-stays a pure static GitHub Pages deploy with no account, no deploy step and
-nothing to keep alive.
+Two browsers can talk directly over WebRTC once each knows a few details about
+the other. Normally a signalling server on the internet passes those details
+back and forth. This game passes them by **QR code** instead: the host shows
+one, a joiner scans it and shows one back, the host scans that, and the two
+connect directly over the local network.
 
-Trystero's default entry point signals over public **nostr** relays (the other
-strategies — MQTT, BitTorrent, Supabase, Firebase, IPFS — are separate imports,
-each a one-line swap). Signalling is only how peers find each other; once a
-connection is up, game traffic is direct.
+It started out as internet play through Trystero and public nostr relays, and
+that is why it changed:
 
-The topology is a **star** — the three clients each connect to the host and to
-nobody else — which keeps peer connections to three and avoids the mesh
-scaling problems Trystero hits with many peers in one room.
+- **Joins took ages or failed** even with everyone in one room. Signalling
+  went through five small public relays chosen by Trystero, and a missed
+  announcement meant waiting a minute for the next. Eleven relays and retried
+  joins helped (see *Joining that does not stall*), but every game still
+  depended on strangers' servers and on internet access.
+- **Browsers cannot run a server**, and requiring a machine running Node rules
+  out phones. A QR code is the only channel between two browsers that needs
+  neither.
+- **The target is people in one room.** Internet play across NATs needed TURN
+  servers the project never had; a LAN needs nothing.
 
-**The cost:** no TURN server, so players behind symmetric NAT or a strict
-corporate firewall (roughly 5–10% of connections) cannot connect at all, and
-there is no free fix — TURN relays real bandwidth.
+What it costs: joining takes two scans per player instead of typing a code,
+and a joiner whose connection is lost for good (tab reloaded or killed,
+device switched networks) needs two more — there is nothing else to carry new
+details. Games in the same room need nothing more, and a brief Wi-Fi hiccup
+recovers by itself.
 
-`?relay=<url>` on the game's URL points **signalling** at a relay of your own
-instead of the public list — a private group's own relay, or a local one for
-testing. That fixes flaky or blocked relays, not NAT: signalling is only how
-peers find each other, and the connection is still direct.
-
-For NAT itself, Trystero also speaks to a self-hosted WebSocket relay, which
-routes the traffic through a server and so sidesteps NAT entirely. That is one
-new implementation of the `Transport` interface and nothing else. A Cloudflare
-Worker + Durable Object is the natural home (bills inbound messages only, at
-20:1, outbound free — about 11 hours of play per day on the free tier).
-**Nothing below changes if the transport is swapped**: the host-authoritative
-design and the wire format are transport-agnostic by construction.
+The topology is a **star**: each joiner has one connection, to the host.
 
 ---
 
-## Lobby codes
+## Joining by QR code
 
-**Six digits**, `000000`–`999999`. A million combinations, and every input
-device the game already supports can enter digits. 4 digits (10k) would collide
-rarely enough, but is small enough that a stranger could stumble into a game —
-cheating is not a concern, an uninvited fifth player still is.
+The host's lobby opens on its QR screen (again with **SHOW JOIN QR**, Q, or X
+on a pad). Every code the game shows is a link to the game, with what it needs
+in the fragment, which browsers never send to a server:
 
-The code is the Trystero room ID directly:
-
-```ts
-const room = joinRoom({ appId: 'dot-maze' }, code);
+```
+https://…/dot-maze-web/?multiplayer#o=<offer>     host   → joiner
+https://…/dot-maze-web/?multiplayer#a=<answer>    joiner → host
 ```
 
-The host generates a code and displays it. Clients type it. There is no
-allocation step and no way to enumerate active codes — a joiner needs the code
-and the app ID.
+1. **Joiner scans the host's code** — with the phone's own camera app, which
+   opens the game already joining, or with **JOIN LAN GAME**, which opens the
+   in-game scanner.
+2. **The joiner's screen shows a reply code.**
+3. **The host taps SCAN REPLY** and points its camera at it. The two connect
+   and the joiner is seated.
+
+The host scans *inside the game* on purpose: switching to the camera app would
+pause the host's tab — on iOS almost at once — freezing the game for everyone.
+It also covers laptops, which have no camera app that reads QR codes. A reply
+opened by the host device's own camera app still works: it lands in a new tab,
+which hands it to the game tab over a `BroadcastChannel` and says to switch
+back.
+
+**What is in the codes.** A data channel needs each side to know the other's
+ICE username and password, DTLS certificate fingerprint (SHA-256), and
+addresses; everything else in an SDP is boilerplate. `src/net/Signal.ts` packs
+those into ~115 characters of base64url and rebuilds a valid SDP on arrival;
+links come to about 150–190 characters, a comfortable QR code. The reply
+cannot be skipped: the fingerprint comes from a certificate the joiner's
+browser generates and a page cannot choose.
+
+**One offer per joiner.** An offer belongs to one peer connection, so the
+host's `HostPairing` keeps one ready and prepares the next as soon as one is
+answered; the QR code on screen moves on. Answers name the offer they answer,
+so a stale one — two joiners scanned the same code — is refused with "HAVE THEM
+SCAN AGAIN" rather than applied to a taken connection.
+
+No STUN servers: on one network every device is reachable by its own address,
+and without internet STUN only slows gathering down.
+
+The offline copy (`sw.js`) is what makes "no internet" true end to end: a
+device that has opened the game once can open it — or a QR link — anywhere.
 
 ---
 
@@ -211,11 +236,12 @@ own out.
 | Event | Behaviour |
 |---|---|
 | Client goes quiet for 1 s | Held directions released — otherwise they run at a wall |
-| Client goes quiet for 8 s | Seat held, player sat out. WebRTC needs 12 s+ to notice a closed tab |
+| Client goes quiet for 8 s | Seat held, player sat out. WebRTC can take 12 s+ to notice a vanished device |
 | Client drops | Seat held 30 s, keyed by a `clientId` in localStorage |
-| Client sees 6 s of silence | Stops waiting on WebRTC and rebuilds the connection itself, retrying for 28 s |
-| Client returns within 30 s | Same slot, and the running game arrives in the `welcome` — including every tile eaten so far, since a delta means nothing to someone who missed the ones before it. They sit out until the next level or life, like any player who was not there |
-| Host drops | Everyone returns to the menu — there is no host migration |
+| Client sees 6 s of silence | Says the host went quiet and waits on the same connection — it recovers by itself if packets flow again — giving up after 28 s |
+| Client's connection closes | It cannot come back without new scans: back to the join screen, *LOST THE HOST - SCAN ITS CODE AGAIN* |
+| Client rescans within 30 s | Same slot, and the running game arrives in the `welcome` — including every tile eaten so far, since a delta means nothing to someone who missed the ones before it. They sit out until the next level or life, like any player who was not there |
+| Host leaves or closes the tab | Its connections close; everyone returns to the menu — there is no host migration |
 | Host goes quiet | Clients say so over the frozen maze and stop predicting |
 | Tab backgrounded | Controls released on the way out, snapshot backlog dropped on the way back |
 
@@ -288,7 +314,11 @@ resolution-dependent drift.
 | File | Purpose |
 |---|---|
 | `src/net/Protocol.ts` | `PROTOCOL_VERSION`, message types, snapshot encode/decode |
-| `src/net/Transport.ts` | The one interface the net code needs from the network, and the Trystero implementation of it |
+| `src/net/Transport.ts` | The one interface the net code needs from the network |
+| `src/net/Signal.ts` | Connection details packed into QR-sized links, and back into SDP |
+| `src/net/Pairing.ts` | WebRTC connections set up by QR code: the host's offers, a joiner's answer |
+| `src/net/QrCode.ts` | Drawing QR codes, and reading them through the camera |
+| `sw.js` | Offline copy of the game |
 | `src/net/NetHost.ts` | Room hosting, peer seating, snapshot broadcast, input intake |
 | `src/net/NetClient.ts` | Join, handshake, snapshot buffer, interpolation, apply-to-state |
 | `src/net/RemotePlayerInput.ts` | `PlayerInput` fed from the wire |
@@ -318,13 +348,12 @@ once pays for itself immediately.
 ```
 HOST                                        CLIENT
 ────                                        ──────
-Menu → Host Online
+Menu → Host LAN Game
   ↓
-generate code, joinRoom(appId, code)
-  ↓                                         Menu → Join Online → type code
-show code + roster                          joinRoom(appId, code)
+show QR (offer)  ─ ─ ─ ─ scanned ─ ─ ─ ─ ─ →  camera / Join LAN Game → answer
+scan reply QR  ← ─ ─ ─ ─ scanned ─ ─ ─ ─ ─ ─  show reply QR (answer)
   ↓                                           ↓
-onPeerJoin ←──────── {hello, protocol} ───────┘
+data channel open ←── {hello, protocol} ──────┘
   ↓
 seat slot, new RemotePlayerInput()
   ├────── {welcome, playerId, level} ────────→ migrateLevel + build render-only
@@ -554,123 +583,40 @@ saying `RECONNECTING...`, and it is back in the game by itself, with the dots
 it missed still eaten and enemies moving again; a host that closes for good
 leaves the client trying, and on the menu once the window runs out.
 
-### Joining that does not stall ✅
+### Joining that does not stall — superseded
 
-Players on one Wi-Fi reported joins that took ages or failed. The direct
-connection was not the problem — on one network it is a host candidate and
-works — so the fixes are all in how two devices find each other.
+Relays widened from five to eleven, joins retried every 8 s, and a Trystero
+rejoin bug fixed (leaving and rejoining a code within ~100 ms got the departing
+room back). It made relay joins better, not reliable, and was removed with the
+relays — see *LAN only, paired by QR code*.
 
-- **Eleven signalling relays instead of five** (`SIGNALLING_RELAYS` in
-  `src/net/Transport.ts`). Trystero derived five from the app id out of its
-  list of small public relays — a Raspberry Pi and a "testrelay" among them —
-  so every game depended on the same five being up. Now six large,
-  long-running relays come first, and the old five are kept, pinned, so a
-  device on an older build still meets a host on this one. Two devices meet if
-  any one relay works for both; a relay that refuses Trystero's events is
-  retired by Trystero on the spot.
-- **Joins retry instead of waiting.** Trystero announces a newcomer in a burst
-  over its first second or so, then once a minute. A missed burst therefore
-  meant sitting out the minute — past the old 20 s timeout. The client now
-  leaves and rejoins every 8 s, each time with a fresh burst, for up to 30 s.
-- **Rejoining a code no longer gets the room that is leaving.** Trystero's
-  `leave()` takes a tenth of a second before it forgets a room, and a
-  `joinRoom` on the same code in that window hands back the departing room,
-  which then finishes leaving under the new join. Reconnection did exactly
-  that — leave, rejoin at once — so an attempt was spent in a dead room before
-  the next one got a live one. A join now waits for the previous leave of its
-  code. Measured against a local relay with the host frozen for 7 s: back in
-  the game as the host recovers, where before it took another 4 s.
+### Join by QR code ✅ — now the only way in
 
-**Verified** in two browsers against a local nostr relay (the public ones are
-unreachable from the test environment) that drops each device's first 3 s of
-announcements: the first join attempt finds nobody, the retry at 8 s is seated
-a second later. A host frozen mid-game shows WAITING, then RECONNECTING, and
-the client is back in the running game when it recovers. Choosing the public
-relays themselves is untested from here — `peer-test.html` on real devices is
-the check.
-- **The screen says what a join is waiting on**: matchmaking (no relay
-  reachable), looking for the host, or which retry it is on. A host's lobby
-  says CONNECTING TO MATCHMAKING while it has no relay open, rather than
-  WAITING FOR PLAYERS over a lobby nobody can find.
+First built alongside the relays, with one QR code that joined through them
+when there was internet and fell back to a reply code when there was not. Then
+the relays went, and the QR codes are how every game connects:
 
-### Join by QR code — with or without internet ✅
+- Trystero, the relay list, the lobby code (typed entry, the code in the HUD)
+  and the relay diagnostics (`peer-test.html`, `net-test.html`) are gone.
+- `NetClient` talks through its `ClientPairing` alone. There is no join timeout
+  — joining waits on a person scanning — and no reconnection loop: a silent
+  host is waited for on the same connection, up to 28 s, and a closed
+  connection sends the joiner back to scan again.
+- The host's lobby opens on the QR screen, since nobody can join without it.
 
-The host's lobby has **SHOW JOIN QR** (Q, or X on a pad). Every QR code the
-game shows is a link to the game, with what it needs in the fragment (never
-sent to the server):
-
-```
-https://…/dot-maze-web/?multiplayer#j=<lobby code>&o=<offer>     host  → joiner
-https://…/dot-maze-web/?multiplayer#a=<answer>                   joiner → host
-```
-
-So a phone's own camera app opens the game already joining, and the in-game
-scanner (**SCAN QR** on the join screen, X on a pad) reads the same link
-without leaving the page.
-
-**With internet** the joiner joins through the relays using the code, and that
-is all anyone sees.
-
-**Without**, the joiner's screen shows a reply code after a few seconds (at
-once if no relay is reachable). The host taps **SCAN REPLY** and points the
-camera at it; the two connect directly over the local network. The host scans
-inside the game on purpose: switching to the camera app would pause the host's
-tab — on iOS almost at once — which freezes the game for everyone and, after
-six seconds of silence, starts clients reconnecting. A reply opened by the host
-device's own camera app still works: it lands in a new tab, which hands it to
-the game tab over a `BroadcastChannel` and says to switch back.
-
-**What is in the codes.** A data channel needs each side to know the other's
-ICE username and password, DTLS certificate fingerprint (SHA-256), and
-addresses; everything else in an SDP is boilerplate. `src/net/Signal.ts` packs
-those into ~115 characters of base64url and rebuilds a valid SDP on arrival;
-links come out around 170–190 characters, a comfortable QR code. The reply
-cannot be skipped: the fingerprint comes from a certificate the joiner's
-browser generates and a page cannot choose.
-
-**How often.** Once per joiner. Games in the same room need nothing more, and
-a brief Wi-Fi hiccup recovers by itself. A joiner whose tab is reloaded or
-killed, or whose device changes networks, needs a fresh pair of scans — with
-no relays there is nothing else to carry new details.
-
-- `HostPairing` keeps one offer ready at all times. An offer belongs to one
-  peer connection, so once it is answered the next is prepared and the QR code
-  moves on. Answers name the offer they answer; a stale one is refused with
-  "HAVE THEM SCAN AGAIN" rather than applied to a taken connection.
-- `ClientPairing` keeps its connection across NetClient's transport rebuilds —
-  a connection that took two scans is not thrown away by a retry.
-- `combineTransports` runs the relays and the pairing side by side. The host
-  accepts both; a joiner uses whichever reaches the host first and drops the
-  other, since two paths would mean two hellos. With a pairing, joining never
-  times out: it is waiting on a person to scan.
-- No STUN servers for paired connections: on one network every device is
-  reachable directly, and without internet STUN only slows gathering.
-- Scanning uses the browser's `BarcodeDetector` where it exists (Chrome on
-  Android) and `jsQR` elsewhere (Safari, Firefox); codes are drawn with
-  `qrcode-generator`. Together about 55 KB gzipped.
-
-**Offline copy.** `sw.js` is a network-first service worker: online, nothing
-changes; when a fetch fails or hangs for 4 s it answers from a cache the page
-fills on every load with its own current files, pruning older bundles. Any
-address of the page — including a QR link — opens the cached game. Ranged
-requests for the music are answered with a proper 206 slice, which Safari
-needs to play media from a cache. A device has to have opened the game once
-online.
-
-**Verified** in Chromium with a fake camera fed the QR codes, and no relays
-reachable at all: the host shows its QR; a joiner opening the link shows a
-reply code; the host's SCAN REPLY reads it and the joiner is seated half a
-second later. A second joiner's reply opened in a new tab on the host browser
-is passed to the game and seated too; a reply for an old offer is refused; the
-in-game SCAN QR on the join screen reads the host's code. A three-player game
-then runs over those connections with every screen in step. With a relay
-reachable the same link joins in under a second and no reply is shown. Offline,
-the page and a QR link load from the cache.
+**Verified** in Chromium with a fake camera fed the QR codes and no internet:
+one joiner opens the host's link (the phone-camera route) and a second uses
+JOIN LAN GAME's in-game scanner; the host scans each reply and both are seated
+within half a second; a used-up reply is refused; a three-player game runs
+with every screen in step; a host frozen for 9 s shows THE HOST WENT QUIET on
+the clients, which clears the moment it recovers; and the host closing its tab
+returns the joiners to the menu. Offline, the page and a QR link load from the
+cache.
 
 **Not verified:** real phones. iOS Safari's camera and WebRTC behaviour,
-Firefox, and mDNS on real Wi-Fi and hotspots are the things to try first.
-Mid-game, a dropped QR-paired joiner can only rescan once the host is back in
-the lobby — the host's QR screen is a lobby screen.
+Firefox, and mDNS on real Wi-Fi and phone hotspots are the things to try
+first. Mid-game, a joiner whose connection is lost can only rescan once the
+host is back in the lobby — the QR screen is a lobby screen.
 
 ---
 
@@ -853,11 +799,12 @@ welcome already carries everything a latecomer needs.
 
 | Risk | Mitigation |
 |---|---|
-| NAT traversal fails without TURN (~5–10%) | Documented limitation; escape hatch is a self-hosted relay, which the design already supports |
-| Public relay flakiness or slow joins | Eleven relays, joins retried every 8 s, progress on screen — see *Joining that does not stall* |
+| A network that keeps devices apart (guest Wi-Fi, client isolation) | Nothing the game can do; use a normal network or a phone hotspot |
+| Browsers that hide local addresses behind mDNS names a network will not resolve | Untested on real networks; a device that has granted camera access exposes its real address instead, which helps the host |
+| A lost connection mid-game needs rescanning, and the QR screen is lobby-only | Documented; the player sits out until the lobby, like any dropped player |
 | Version skew between cached tabs | `PROTOCOL_VERSION` in the handshake, refuse with a reload prompt |
 | Merge conflicts with editor work | Net code lives in `src/net/`; only `Game.ts` is shared. Land in small merges rather than one long-lived branch |
-| Trystero costs every player ~137 KB of bundle, offline play included | Acceptable gzipped; if it matters, a dynamic `import()` of `src/net/` keeps it off the local-play path, at the cost of an esbuild splitting step |
+| QR libraries cost every player ~55 KB gzipped, offline play included | Acceptable; a dynamic `import()` of `src/net/` would keep it off the local-play path, at the cost of an esbuild splitting step |
 
 ### Performance note
 
@@ -877,15 +824,14 @@ build a `Set` of `"x,y"` keys once at level load. Not a blocker.
 
 All five phases are done, and so is automatic reconnection. Phases 6 to 8 —
 couch co-op alongside online play, up to eight players — are planned and not
-started. The relay fallback is still open, if NAT traversal proves too lossy in
-real use.
+started. Multiplayer is LAN only, joined by QR code.
 
 | Feature | Status |
 |---|---|
 | Shared input-apply helper extracted | ✅ Complete — Keyboard, Gamepad and Touch |
 | `RemotePlayerInput` | ✅ Complete — driven by the debug loopback |
 | Protocol types, version, snapshot codec | ✅ Complete |
-| Trystero transport, host + client | ✅ Complete — behind a `Transport` seam |
+| QR-code WebRTC pairing, host + client | ✅ Complete — behind the `Transport` seam; Trystero removed |
 | Lobby screens and code entry | ✅ Complete |
 | Snapshot broadcast and apply | ✅ Complete |
 | Event-driven client audio | ✅ Complete |
@@ -894,7 +840,7 @@ real use.
 | Disconnect / reconnect / host-left | ✅ Complete — manual rejoin, seat held 30 s |
 | Client game-over screen with host status | ✅ Complete |
 | Waiting banner when the host goes quiet | ✅ Complete |
-| Lobby code in the HUD during an online game | ✅ Complete — the lobby is the only other place it appears |
+| Lobby code in the HUD during an online game | ❌ Removed — there is no code; joining is by QR |
 | Marker over your own player online | ✅ Complete — the props say which slot, this says which is yours |
 | Prediction stalls on dots, as the host does | ✅ Complete — the cause of the rubber banding |
 | Divergence snaps instead of nudging | ✅ Complete — nudging bounced, and walked through walls |
@@ -907,9 +853,9 @@ real use.
 | Automatic reconnection (client retries by itself) | ✅ Complete — 28 s of retries against a 30 s seat hold |
 | Room survives game over, host restarts from the lobby | ✅ Complete |
 | Host picks a library level before hosting | ✅ Complete — and between games, not only before the first |
-| Join by QR code (camera app or in-game scanner) | ✅ Complete — one code works with internet or without |
+| Join by QR code (camera app or in-game scanner) | ✅ Complete — the only way in |
 | Offline copy of the game (service worker) | ✅ Complete — network first, cache when the network is gone |
 | Mid-level joining | ❌ Out of scope — joiners and returners wait for the next level |
-| WebSocket relay fallback | ⬜ Deferred — only if NAT failures prove common |
+| Internet play (relays, TURN) | ❌ Removed — LAN only |
 | Host migration | ❌ Out of scope — blocked by non-serialisable timers |
 | Anti-cheat / server validation | ❌ Out of scope — co-op, host is trusted |

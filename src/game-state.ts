@@ -40,13 +40,6 @@ export const gameState = {
     // Ready state (Phase 10)
     showReady: false,
     /**
-     * The lobby code, while an online game is running. Null offline. The lobby
-     * screen is the only other place it appears, and a game cannot go back
-     * there without ending — so without this, nobody can read the code out
-     * mid-game.
-     */
-    onlineCode: null as string | null,
-    /**
      * Which player is the one at this keyboard, during an online game. Null
      * offline, where every player on screen is local and marking them all
      * would say nothing.

@@ -3,12 +3,12 @@ import type { SignalBlob } from './Signal';
 import { blobFromSdp, randomPairId, sdpFromBlob } from './Signal';
 
 /**
- * WebRTC connections set up by QR code rather than through signalling relays.
+ * WebRTC connections set up by QR code: the host shows an offer, a joiner
+ * scans it and shows an answer, the host scans that, and the two connect
+ * directly over the local network — with no internet and no server at all.
  *
- * The relays only ever carried connection details between two devices that
- * could already reach each other on the same network. Here a QR code carries
- * them instead: the host shows an offer, a joiner scans it and shows an answer,
- * the host scans that, and the two connect directly — with no internet at all.
+ * Devices usually need a signalling server to swap these details; on one
+ * network they can already reach each other, so the codes are enough.
  *
  * No STUN servers: on one network every device is reachable by its own
  * address, and with no internet a STUN request only delays gathering.
@@ -172,10 +172,9 @@ export const PAIRED_HOST = 'host';
  * The joiner's side: answer one offer, and hold the connection that comes of
  * it.
  *
- * The connection outlives any one `Transport` built on it. The client rebuilds
- * its transport when it retries or reconnects, and a connection that took two
- * QR scans to set up must not be thrown away with it — so each rebuild
- * `attach`es a fresh view, and only `close` ends the connection.
+ * The connection is separate from the `Transport` view the client talks
+ * through: a connection that took two QR scans to set up is only ended by
+ * `close`, never by a view being dropped.
  */
 export class ClientPairing {
     /** The answer to show the host, once it is ready; null if it cannot be made. */
@@ -252,64 +251,4 @@ export class ClientPairing {
         if (this.closed || this.pc.localDescription === null) return null;
         return blobFromSdp(this.pc.localDescription.sdp, 'answer', offer.pairId);
     }
-}
-
-/**
- * Several transports as one, each peer id prefixed with where it came from.
- *
- * `exclusive` is for a joiner, who wants one path to the host and not two:
- * the first part to see a peer wins, and the rest are left at once. Two paths
- * would mean two hellos, and the host would seat the second while the client
- * kept talking down the first.
- */
-export function combineTransports(parts: Record<string, Transport>, exclusive = false): Transport {
-    const entries = Object.entries(parts);
-    let winner: string | null = null;
-    const live = new Set(entries.map(([prefix]) => prefix));
-
-    const combined: Transport = {
-        send(data, target) {
-            if (target === undefined) {
-                for (const [prefix, part] of entries) if (live.has(prefix)) part.send(data);
-                return;
-            }
-            const cut = target.indexOf(':');
-            const part = parts[target.slice(0, cut)];
-            if (part !== undefined && live.has(target.slice(0, cut))) part.send(data, target.slice(cut + 1));
-        },
-        leave() {
-            for (const [prefix, part] of entries) {
-                if (!live.has(prefix)) continue;
-                live.delete(prefix);
-                part.onMessage = null;
-                part.onPeerJoin = null;
-                part.onPeerLeave = null;
-                part.leave();
-            }
-        },
-        onMessage: null,
-        onPeerJoin: null,
-        onPeerLeave: null,
-    };
-
-    for (const [prefix, part] of entries) {
-        part.onMessage = (raw, peerId) => combined.onMessage?.(raw, `${prefix}:${peerId}`);
-        part.onPeerLeave = (peerId) => combined.onPeerLeave?.(`${prefix}:${peerId}`);
-        part.onPeerJoin = (peerId) => {
-            if (exclusive && winner === null) {
-                winner = prefix;
-                for (const [other, otherPart] of entries) {
-                    if (other === prefix || !live.has(other)) continue;
-                    live.delete(other);
-                    otherPart.onMessage = null;
-                    otherPart.onPeerJoin = null;
-                    otherPart.onPeerLeave = null;
-                    otherPart.leave();
-                }
-            }
-            if (exclusive && winner !== prefix) return;
-            combined.onPeerJoin?.(`${prefix}:${peerId}`);
-        };
-    }
-    return combined;
 }

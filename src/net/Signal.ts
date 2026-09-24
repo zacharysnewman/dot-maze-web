@@ -8,9 +8,9 @@
  * description is boilerplate for a data channel, identical every time.
  *
  * So instead of shipping the 600-byte SDP, pack those four things into roughly
- * eighty bytes, carry them in a link, and rebuild a valid SDP on arrival. With
- * no relay to carry them, a QR code does — which is how devices on one network
- * connect with no internet at all.
+ * eighty bytes, carry them in a link, and rebuild a valid SDP on arrival. A QR
+ * code carries the link — which is how devices on one network connect with no
+ * internet and no server at all.
  */
 
 /** Which half of the exchange a blob is. */
@@ -191,21 +191,14 @@ export function randomPairId(): number {
 // opens it; the in-game scanner reads the same link and never leaves the page.
 // The details ride in the fragment, which browsers never send to the server.
 
-export interface JoinLink {
-    /** Lobby code, for joining through the relays. */
-    code: string | null;
-    /** The host's offer, for joining with no relay at all. */
-    offer: SignalBlob | null;
-}
-
 /** The address of this game, without whatever query or fragment it was opened with. */
 function gameBase(): string {
     return `${window.location.origin}${window.location.pathname}`;
 }
 
-export function joinLinkUrl(code: string, offer: SignalBlob | null): string {
-    const fragment = offer === null ? `j=${code}` : `j=${code}&o=${packBlob(offer)}`;
-    return `${gameBase()}?multiplayer#${fragment}`;
+/** The host's invitation: open it, and the game starts joining. */
+export function joinLinkUrl(offer: SignalBlob): string {
+    return `${gameBase()}?multiplayer#o=${packBlob(offer)}`;
 }
 
 export function answerLinkUrl(answer: SignalBlob): string {
@@ -213,16 +206,11 @@ export function answerLinkUrl(answer: SignalBlob): string {
 }
 
 /** Read a join link, from the page's own address or a scanned QR code. */
-export function parseJoinLink(url: string): JoinLink | null {
-    const params = fragmentParams(url);
-    if (params === null) return null;
-    const code = params.get('j');
-    const offerText = params.get('o');
-    const offer = offerText === null ? null : unpackBlob(offerText);
-    if (offer !== null && offer.kind !== 'offer') return null;
-    const validCode = code !== null && /^[0-9]{6}$/.test(code) ? code : null;
-    if (validCode === null && offer === null) return null;
-    return { code: validCode, offer };
+export function parseJoinLink(url: string): SignalBlob | null {
+    const text = fragmentParams(url)?.get('o') ?? null;
+    if (text === null) return null;
+    const blob = unpackBlob(text);
+    return blob !== null && blob.kind === 'offer' ? blob : null;
 }
 
 /** Read an answer link — a joiner's reply, scanned by the host. */

@@ -2,20 +2,23 @@ import type { LevelData } from '../types';
 import { migrateLevel } from '../editor/LevelMigrate';
 import type { Direction } from '../types';
 import type { ClientMessage, HostMessage, PeerInfo, RejectReason, Snapshot } from './Protocol';
-import { PROTOCOL_VERSION, decodeMessage, encodeMessage, isLobbyCode, localClientId } from './Protocol';
-import type { Transport, TransportFactory } from './Transport';
-import { trysteroTransport } from './Transport';
+import { PROTOCOL_VERSION, decodeMessage, encodeMessage, localClientId } from './Protocol';
+import type { Transport } from './Transport';
 import type { ClientPairing } from './Pairing';
-import { combineTransports } from './Pairing';
 
-export type JoinFailure = RejectReason | 'timeout' | 'bad-code' | 'host-left';
+export type JoinFailure = RejectReason | 'host-left';
 
 /** What the client is doing about its connection, for the screen to report. */
 export type ConnectionState = 'connected' | 'reconnecting';
 
 export interface NetClientOptions {
-    code: string;
     name: string;
+    /**
+     * The connection to the host, set up by scanning QR codes. Joining waits on
+     * it for as long as it takes: until the host scans the reply, nothing can
+     * happen, and the player can cancel.
+     */
+    pairing: ClientPairing;
     /**
      * The host welcomed us — the level and our player id are settled. `state`
      * is set when a game is already running, which is what a player coming back
@@ -27,59 +30,31 @@ export interface NetClientOptions {
     onStart: (level: LevelData) => void;
     onSnapshot: (snapshot: Snapshot) => void;
     onFailure: (failure: JoinFailure) => void;
-    /** Connection lost and being rebuilt, or back. */
+    /** The host went quiet, or came back. */
     onConnectionState?: (state: ConnectionState) => void;
-    /** Overridable so the handshake can be exercised without a network. */
-    transport?: TransportFactory;
-    /**
-     * A connection being set up by QR code, raced against the relays. Whichever
-     * reaches the host first is used. With one, joining never times out: it is
-     * waiting on the host to scan a code, which takes as long as it takes.
-     */
-    pairing?: ClientPairing;
 }
 
 /**
- * Joining is retried rather than waited out. Trystero announces a new arrival
- * to the relays in a quick burst over its first second or two and then only
- * once a minute, so if that burst is missed — a relay slow to connect, a
- * subscription not yet live on the host's side — one long wait just sits
- * through the minute-long gap. Leaving and rejoining the room starts a fresh
- * burst. An attempt is long enough for signalling plus a WebRTC handshake on
- * one network, which takes a second or two when it works at all.
- *
- * The window is how long a wrong code takes to be reported as one.
+ * How long a silent host is waited for. The host holds a seat for 30 s, so
+ * give up a little before that rather than hanging on for a seat that has been
+ * freed. Silence is not a dead connection — a host whose tab was backgrounded
+ * or whose Wi-Fi hiccuped comes back on the same connection, and WebRTC
+ * recovers a path by itself when packets flow again — so this only waits.
+ * There is nothing to rebuild: a new connection would take new QR scans.
  */
-const JOIN_ATTEMPT_MS = 8_000;
-const JOIN_WINDOW_MS = 30_000;
-
-/**
- * Reconnection budget. The host holds a seat for 30 s, so give up a little
- * before that rather than succeeding into a seat that has just been freed.
- * Each attempt is a fresh room join, and a connection that is coming back
- * usually does so on the first or second.
- */
-const RECONNECT_WINDOW_MS = 28_000;
-const RECONNECT_ATTEMPT_MS = 5_000;
+const SILENCE_GIVE_UP_MS = 28_000;
 
 /** The client half of a room: everything it knows, the host told it. */
 export class NetClient {
-    readonly code: string;
-
     private readonly options: NetClientOptions;
-    private readonly newTransport: TransportFactory;
-    private transport: Transport | null = null;
+    private readonly transport: Transport;
 
     private hostPeerId: string | null = null;
-    private welcomeTimer: ReturnType<typeof setTimeout> | null = null;
     private closed = false;
     private seq = 0;
-    /** When the connection was lost; 0 while it is up. */
+    /** When the host went quiet; 0 while it is talking. */
     private lostAt = 0;
-    /** When the first join began, for the join window. */
-    private joinStartedAt = 0;
-    /** Which attempt at joining this is, from 1, for the screen to show. */
-    joinAttempt = 0;
+    private giveUpTimer: ReturnType<typeof setTimeout> | null = null;
 
     playerId = 0;
     roster: PeerInfo[] = [];
@@ -87,38 +62,14 @@ export class NetClient {
 
     constructor(options: NetClientOptions) {
         this.options = options;
-        this.code = options.code;
-        const relays = options.transport ?? trysteroTransport;
-        const pairing = options.pairing;
-        this.newTransport = pairing === undefined
-            ? relays
-            : (code) => combineTransports({ r: relays(code), q: pairing.attach() }, true);
-
-        if (!isLobbyCode(options.code)) {
-            this.closed = true;
-            // Report asynchronously so a caller can finish wiring up first.
-            setTimeout(() => options.onFailure('bad-code'), 0);
-            return;
-        }
-
-        this.joinStartedAt = performance.now();
-        this.openRoom(JOIN_ATTEMPT_MS);
-    }
-
-    /** Join the room and wait to be welcomed. Used to connect and to reconnect. */
-    private openRoom(welcomeTimeout: number): void {
-        this.hostPeerId = null;
-        this.joinAttempt++;
-        this.transport = this.newTransport(this.code);
+        this.transport = options.pairing.attach();
 
         this.transport.onMessage = (raw, peerId) => {
             const msg = decodeMessage(raw);
             if (msg !== null) this.handle(msg as HostMessage, peerId);
         };
 
-        // Everyone in the room is a peer, but only the host answers a hello —
-        // other clients ignore it. Greeting each arrival covers both orders:
-        // joining an existing lobby, and being first in with the host to come.
+        // The only peer is the host, and it seats nobody who has not said hello.
         this.transport.onPeerJoin = (peerId) => {
             this.sendTo({
                 t: 'hello',
@@ -128,84 +79,38 @@ export class NetClient {
             }, peerId);
         };
 
-        this.transport.onPeerLeave = (peerId) => {
-            if (peerId === this.hostPeerId) this.connectionLost();
-        };
-
-        this.clearWelcomeTimer();
-        this.welcomeTimer = setTimeout(() => {
-            if (this.lostAt !== 0) this.tryAgain();
-            else if (this.options.pairing === undefined
-                && performance.now() - this.joinStartedAt >= JOIN_WINDOW_MS) this.fail('timeout');
-            else this.retryJoin();
-        }, welcomeTimeout);
+        // The connection itself closed or failed: that is not coming back
+        // without scanning again.
+        this.transport.onPeerLeave = () => this.fail('host-left');
     }
 
-    /** Not welcomed yet: go round again, with a fresh announcement burst. */
-    private retryJoin(): void {
-        if (this.closed) return;
-        this.dropRoom();
-        // Waiting on a QR scan has no deadline, so every attempt is a full one.
-        const left = this.options.pairing !== undefined
-            ? JOIN_ATTEMPT_MS
-            : JOIN_WINDOW_MS - (performance.now() - this.joinStartedAt);
-        this.openRoom(Math.min(JOIN_ATTEMPT_MS, Math.max(left, 1_000)));
-    }
-
-    /** True while the connection is down and being rebuilt. */
+    /** True while the host is silent and being waited for. */
     isReconnecting(): boolean {
         return this.lostAt !== 0;
     }
 
-    /** Whole seconds left before reconnection gives up, for the screen to show. */
+    /** Whole seconds left before waiting gives up, for the screen to show. */
     reconnectSecondsLeft(): number {
         if (this.lostAt === 0) return 0;
-        const left = RECONNECT_WINDOW_MS - (performance.now() - this.lostAt);
+        const left = SILENCE_GIVE_UP_MS - (performance.now() - this.lostAt);
         return Math.max(0, Math.ceil(left / 1000));
     }
 
-    /**
-     * The game noticing the host has gone quiet. WebRTC takes twelve seconds or
-     * more to report a dead connection, and the host only holds a seat for
-     * thirty, so waiting for the transport to admit it wastes most of the
-     * window a reconnection has to work with.
-     */
+    /** The game noticed the host has gone quiet. Wait for it, up to a point. */
     reportSilence(): void {
-        this.connectionLost();
-    }
-
-    /**
-     * Start rebuilding the connection. Further losses while an attempt is in
-     * flight are ignored — the retry loop is driven by attempts timing out, not
-     * by how often the game notices the silence.
-     */
-    private connectionLost(): void {
         if (this.closed || this.lostAt !== 0) return;
         this.lostAt = performance.now();
         this.options.onConnectionState?.('reconnecting');
-        this.tryAgain();
+        this.giveUpTimer = setTimeout(() => this.fail('host-left'), SILENCE_GIVE_UP_MS);
     }
 
-    private tryAgain(): void {
-        if (this.closed) return;
-        if (performance.now() - this.lostAt > RECONNECT_WINDOW_MS) {
-            // Out of time: either the host is gone, or its seat for us is.
-            this.fail('host-left');
-            return;
-        }
-        this.dropRoom();
-        this.openRoom(RECONNECT_ATTEMPT_MS);
-    }
-
-    /** Let go of the room without ending the session. */
-    private dropRoom(): void {
-        if (this.transport === null) return;
-        this.transport.onMessage = null;
-        this.transport.onPeerJoin = null;
-        this.transport.onPeerLeave = null;
-        this.transport.leave();
-        this.transport = null;
-        this.hostPeerId = null;
+    /** The host is talking again. */
+    private heardHost(): void {
+        if (this.lostAt === 0) return;
+        this.lostAt = 0;
+        if (this.giveUpTimer !== null) clearTimeout(this.giveUpTimer);
+        this.giveUpTimer = null;
+        this.options.onConnectionState?.('connected');
     }
 
     /**
@@ -224,31 +129,31 @@ export class NetClient {
     leave(): void {
         if (this.closed) return;
         this.closed = true;
-        this.clearWelcomeTimer();
+        if (this.giveUpTimer !== null) clearTimeout(this.giveUpTimer);
         // Leaving on purpose frees the seat now; a seat is only held for someone
         // who dropped.
         if (this.hostPeerId !== null) this.sendTo({ t: 'leave' }, this.hostPeerId);
-        this.dropRoom();
+        this.transport.onMessage = null;
+        this.transport.onPeerJoin = null;
+        this.transport.onPeerLeave = null;
+        this.transport.leave();
     }
 
     private handle(msg: HostMessage, peerId: string): void {
         if (this.closed) return;
+        this.heardHost();
 
         switch (msg.t) {
             case 'welcome': {
-                if (this.hostPeerId !== null) return; // already seated
+                const returning = this.hostPeerId !== null;
                 this.hostPeerId = peerId;
-                this.clearWelcomeTimer();
-                if (this.lostAt !== 0) {
-                    this.lostAt = 0;
-                    this.options.onConnectionState?.('connected');
-                }
                 this.playerId = msg.playerId;
                 // migrateLevel only upgrades forwards, which is exactly why the
                 // handshake carries a version: a level too new to migrate has
                 // already been refused by then.
                 this.level = migrateLevel(msg.level);
                 this.roster = msg.roster;
+                if (returning) return; // a repeat welcome changes nothing
                 this.options.onWelcome(this.playerId, this.level, msg.state);
                 this.options.onRosterChange(this.roster, this.level.name);
                 break;
@@ -276,14 +181,7 @@ export class NetClient {
         this.options.onFailure(failure);
     }
 
-    private clearWelcomeTimer(): void {
-        if (this.welcomeTimer !== null) {
-            clearTimeout(this.welcomeTimer);
-            this.welcomeTimer = null;
-        }
-    }
-
     private sendTo(msg: ClientMessage, peerId?: string): void {
-        this.transport?.send(encodeMessage(msg), peerId);
+        this.transport.send(encodeMessage(msg), peerId);
     }
 }
