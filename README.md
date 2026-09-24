@@ -6,7 +6,8 @@ A web-based dot-maze game written in TypeScript. The maze, characters, and all v
 
 - **1–4 player co-op** — shared life pool, simultaneous play, players sit out on death and revive on level clear
 - Keyboard, touch/swipe, and gamepad input — P1 accepts all three simultaneously
-- **Online co-op** behind `?multiplayer` — see `MULTIPLAYER.md`
+- **Online co-op** behind `?multiplayer` — join by code or by scanning the host's QR code, which also works with no internet; see `MULTIPLAYER.md`
+- Works offline once it has been opened (service worker)
 - All graphics procedurally drawn on canvas (no image assets)
 - Web Audio API sound effects
 

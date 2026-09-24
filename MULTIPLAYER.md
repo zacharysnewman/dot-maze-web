@@ -593,6 +593,85 @@ the check.
   says CONNECTING TO MATCHMAKING while it has no relay open, rather than
   WAITING FOR PLAYERS over a lobby nobody can find.
 
+### Join by QR code — with or without internet ✅
+
+The host's lobby has **SHOW JOIN QR** (Q, or X on a pad). Every QR code the
+game shows is a link to the game, with what it needs in the fragment (never
+sent to the server):
+
+```
+https://…/dot-maze-web/?multiplayer#j=<lobby code>&o=<offer>     host  → joiner
+https://…/dot-maze-web/?multiplayer#a=<answer>                   joiner → host
+```
+
+So a phone's own camera app opens the game already joining, and the in-game
+scanner (**SCAN QR** on the join screen, X on a pad) reads the same link
+without leaving the page.
+
+**With internet** the joiner joins through the relays using the code, and that
+is all anyone sees.
+
+**Without**, the joiner's screen shows a reply code after a few seconds (at
+once if no relay is reachable). The host taps **SCAN REPLY** and points the
+camera at it; the two connect directly over the local network. The host scans
+inside the game on purpose: switching to the camera app would pause the host's
+tab — on iOS almost at once — which freezes the game for everyone and, after
+six seconds of silence, starts clients reconnecting. A reply opened by the host
+device's own camera app still works: it lands in a new tab, which hands it to
+the game tab over a `BroadcastChannel` and says to switch back.
+
+**What is in the codes.** A data channel needs each side to know the other's
+ICE username and password, DTLS certificate fingerprint (SHA-256), and
+addresses; everything else in an SDP is boilerplate. `src/net/Signal.ts` packs
+those into ~115 characters of base64url and rebuilds a valid SDP on arrival;
+links come out around 170–190 characters, a comfortable QR code. The reply
+cannot be skipped: the fingerprint comes from a certificate the joiner's
+browser generates and a page cannot choose.
+
+**How often.** Once per joiner. Games in the same room need nothing more, and
+a brief Wi-Fi hiccup recovers by itself. A joiner whose tab is reloaded or
+killed, or whose device changes networks, needs a fresh pair of scans — with
+no relays there is nothing else to carry new details.
+
+- `HostPairing` keeps one offer ready at all times. An offer belongs to one
+  peer connection, so once it is answered the next is prepared and the QR code
+  moves on. Answers name the offer they answer; a stale one is refused with
+  "HAVE THEM SCAN AGAIN" rather than applied to a taken connection.
+- `ClientPairing` keeps its connection across NetClient's transport rebuilds —
+  a connection that took two scans is not thrown away by a retry.
+- `combineTransports` runs the relays and the pairing side by side. The host
+  accepts both; a joiner uses whichever reaches the host first and drops the
+  other, since two paths would mean two hellos. With a pairing, joining never
+  times out: it is waiting on a person to scan.
+- No STUN servers for paired connections: on one network every device is
+  reachable directly, and without internet STUN only slows gathering.
+- Scanning uses the browser's `BarcodeDetector` where it exists (Chrome on
+  Android) and `jsQR` elsewhere (Safari, Firefox); codes are drawn with
+  `qrcode-generator`. Together about 55 KB gzipped.
+
+**Offline copy.** `sw.js` is a network-first service worker: online, nothing
+changes; when a fetch fails or hangs for 4 s it answers from a cache the page
+fills on every load with its own current files, pruning older bundles. Any
+address of the page — including a QR link — opens the cached game. Ranged
+requests for the music are answered with a proper 206 slice, which Safari
+needs to play media from a cache. A device has to have opened the game once
+online.
+
+**Verified** in Chromium with a fake camera fed the QR codes, and no relays
+reachable at all: the host shows its QR; a joiner opening the link shows a
+reply code; the host's SCAN REPLY reads it and the joiner is seated half a
+second later. A second joiner's reply opened in a new tab on the host browser
+is passed to the game and seated too; a reply for an old offer is refused; the
+in-game SCAN QR on the join screen reads the host's code. A three-player game
+then runs over those connections with every screen in step. With a relay
+reachable the same link joins in under a second and no reply is shown. Offline,
+the page and a QR link load from the cache.
+
+**Not verified:** real phones. iOS Safari's camera and WebRTC behaviour,
+Firefox, and mDNS on real Wi-Fi and hotspots are the things to try first.
+Mid-game, a dropped QR-paired joiner can only rescan once the host is back in
+the lobby — the host's QR screen is a lobby screen.
+
 ---
 
 ## Planned: couch co-op, and eight players
@@ -828,6 +907,8 @@ real use.
 | Automatic reconnection (client retries by itself) | ✅ Complete — 28 s of retries against a 30 s seat hold |
 | Room survives game over, host restarts from the lobby | ✅ Complete |
 | Host picks a library level before hosting | ✅ Complete — and between games, not only before the first |
+| Join by QR code (camera app or in-game scanner) | ✅ Complete — one code works with internet or without |
+| Offline copy of the game (service worker) | ✅ Complete — network first, cache when the network is gone |
 | Mid-level joining | ❌ Out of scope — joiners and returners wait for the next level |
 | WebSocket relay fallback | ⬜ Deferred — only if NAT failures prove common |
 | Host migration | ❌ Out of scope — blocked by non-serialisable timers |

@@ -1742,6 +1742,40 @@ function forwardReplyTab(url: string): void {
     }, 2000);
 }
 
+// ── Offline copy ──────────────────────────────────────────────────────────────
+
+/** Shared with sw.js, which answers from this cache when the network is gone. */
+const OFFLINE_CACHE = 'dot-maze-offline-v1';
+
+/**
+ * Keep a copy of this build so the game opens with no internet — which is when
+ * QR pairing matters most. The service worker only serves the copy when the
+ * network fails; online, everything loads as it always has.
+ *
+ * The page names its own files rather than the worker guessing them: the
+ * bundle's name changes with every build, and only the page knows it. Older
+ * bundles are dropped so the copy does not grow build after build.
+ */
+async function cacheForOffline(): Promise<void> {
+    if (!('serviceWorker' in navigator) || !window.isSecureContext || typeof caches === 'undefined') return;
+    try {
+        await navigator.serviceWorker.register('sw.js');
+        const script = document.querySelector<HTMLScriptElement>('script[src*="dist/"]');
+        const files = [
+            new URL('index.html', window.location.href).href,
+            new URL('assets/audio/menu-music.mp3', window.location.href).href,
+            ...(script !== null ? [script.src] : []),
+        ];
+        const cache = await caches.open(OFFLINE_CACHE);
+        await cache.addAll(files);
+        for (const request of await cache.keys()) {
+            if (request.url.includes('/dist/') && request.url !== script?.src) await cache.delete(request);
+        }
+    } catch {
+        // Offline already, or storage refused: the game still works online.
+    }
+}
+
 /**
  * Opening the game from a link happens without a tap, and browsers keep sound
  * off until there has been one. Take the first.
@@ -2665,6 +2699,7 @@ window.onload = function () {
     }, { passive: false } as EventListenerOptions);
 
     listenForReplyTabs();
+    void cacheForOffline();
 
     // Opened from a QR code by a phone's camera: the link says what to do.
     const hash = window.location.hash;
