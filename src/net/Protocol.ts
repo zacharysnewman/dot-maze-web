@@ -15,32 +15,11 @@ export const PROTOCOL_VERSION = 3;
 /** Seats in a room, host included. */
 export const MAX_PLAYERS = 4;
 
-/**
- * Namespaces the room. Two builds with different app ids never meet, even on
- * the same code — which is also why a code alone cannot be used to enumerate
- * games.
- */
-export const APP_ID = 'dot-maze';
-
-/**
- * The single Trystero action every message travels on. One channel keeps
- * ordering between a welcome and the snapshots that follow it; the envelope's
- * `t` field does the sorting.
- */
-export const NET_ACTION = 'net';
-
-/** Lobby codes are six digits: a million combinations, enterable on a d-pad. */
-export const CODE_LENGTH = 6;
-
-export function isLobbyCode(code: string): boolean {
-    return new RegExp(`^[0-9]{${CODE_LENGTH}}$`).test(code);
-}
-
 const CLIENT_ID_KEY = 'dot-maze-client-id';
 
 /**
  * This browser's identity to a host, stable across reloads and reconnections.
- * Peer ids are not: Trystero mints a new one every session, so without this a
+ * Peer ids are not: every connection gets a new one, so without this a
  * player coming back looks like a stranger and their held seat is unreachable.
  */
 export function localClientId(): string {
@@ -55,17 +34,6 @@ export function localClientId(): string {
         // reload, so a reconnecting player takes a fresh seat instead.
         return `c${Math.random().toString(36).slice(2, 12)}`;
     }
-}
-
-/**
- * `Math.random` is fine here: a code is not a secret, only an address. Guessing
- * one lands you in a stranger's co-op game, which is why it is six digits and
- * not four.
- */
-export function randomLobbyCode(): string {
-    let code = '';
-    for (let i = 0; i < CODE_LENGTH; i++) code += Math.floor(Math.random() * 10);
-    return code;
 }
 
 /** Snapshot broadcast rate. 60 Hz render / 20 Hz send = every 3rd frame. */

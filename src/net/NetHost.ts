@@ -3,10 +3,9 @@ import { RemotePlayerInput } from './RemotePlayerInput';
 import type { ClientMessage, HostMessage, PeerInfo, RejectReason, Snapshot } from './Protocol';
 import {
     MAX_PLAYERS, PROTOCOL_VERSION, RECONNECT_GRACE_MS,
-    decodeMessage, encodeMessage, isProtocolCompatible, randomLobbyCode,
+    decodeMessage, encodeMessage, isProtocolCompatible,
 } from './Protocol';
-import type { Transport, TransportFactory } from './Transport';
-import { trysteroTransport } from './Transport';
+import type { Transport } from './Transport';
 
 /** A seated remote player, from the host's side. */
 export interface HostSeat {
@@ -34,8 +33,11 @@ export interface NetHostOptions {
     onSeatConnectionChange?: (playerId: number, connected: boolean) => void;
     /** The latest state of the running game, for a returning player's welcome. */
     latestSnapshot?: () => Snapshot | null;
-    /** Overridable so the handshake can be exercised without a network. */
-    transport?: TransportFactory;
+    /**
+     * How joiners reach the host — QR-code pairing in the game, anything with
+     * the same shape in a test.
+     */
+    transport: Transport;
 }
 
 /** The host always holds player 1; joiners take 2, 3, 4 in whatever order they arrive. */
@@ -44,16 +46,10 @@ const HOST_PLAYER_ID = 1;
 /**
  * The host half of a room.
  *
- * The lobby code *is* the room id, so there is no allocation step, no collision
- * table and no TTL — and no way to enumerate active codes, since a joiner needs
- * both the code and the app id.
- *
- * The topology is a star: clients talk to the host and to nobody else. Trystero
- * connects every peer in a room to every other, but nothing here sends
- * client-to-client, so a full room is three connections rather than a mesh.
+ * The topology is a star: each joiner has one connection, to the host, set up
+ * by scanning QR codes, and joiners never talk to each other.
  */
 export class NetHost {
-    readonly code: string;
     readonly name: string;
 
     private readonly transport: Transport;
@@ -68,12 +64,11 @@ export class NetHost {
 
     constructor(options: NetHostOptions) {
         this.options = options;
-        this.code = randomLobbyCode();
         this.name = options.name;
         this.level = options.level;
         this.onRosterChange = options.onRosterChange;
 
-        this.transport = (options.transport ?? trysteroTransport)(this.code);
+        this.transport = options.transport;
 
         this.transport.onMessage = (raw, peerId) => {
             const msg = decodeMessage(raw);

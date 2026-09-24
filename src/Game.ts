@@ -30,8 +30,14 @@ import { encodeHeld, encodeMessage, decodeMessage } from './net/Protocol';
 import { NetHost } from './net/NetHost';
 import { NetClient } from './net/NetClient';
 import type { JoinFailure } from './net/NetClient';
-import type { CodeEntry, LobbyView } from './net/LobbyScreen';
-import { drawClientGameOver, drawLobbyScreen, drawWaitingBanner, hitsLeaveButton, hitsMapButton, hitsStartButton, showCodeEntry } from './net/LobbyScreen';
+import type { LobbyView } from './net/LobbyScreen';
+import { drawClientGameOver, drawLobbyScreen, drawWaitingBanner, hitsLeaveButton, hitsMapButton, hitsQrButton, hitsStartButton, showHostQr, showJoiningScreen } from './net/LobbyScreen';
+import type { HostQrScreen, JoiningScreen } from './net/LobbyScreen';
+import type { AnswerResult } from './net/Pairing';
+import { ClientPairing, HostPairing } from './net/Pairing';
+import type { SignalBlob } from './net/Signal';
+import { answerLinkUrl, joinLinkUrl, parseAnswerLink, parseJoinLink } from './net/Signal';
+import { showQrScanner } from './net/QrCode';
 import { openLibraryModal } from './editor/LibraryModal';
 import { validateLevel } from './editor/Validate';
 import { getTileSet } from './editor/TileSet';
@@ -41,7 +47,7 @@ import { InputSampler } from './net/InputSampler';
 import { ClientGame } from './net/ClientGame';
 import type { ConnectionState } from './net/NetClient';
 import type { HostPhase, Snapshot } from './net/Protocol';
-import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, SNAPSHOT_HZ, tileIndex } from './net/Protocol';
+import { ENEMY_POPUP_SECONDS, FRUIT_POPUP_SECONDS, MAX_PLAYERS, SNAPSHOT_HZ, tileIndex } from './net/Protocol';
 
 
 // Enemy eye-return speed (constant regardless of level)
@@ -1194,7 +1200,6 @@ function start(slots: ConfirmedSlot[], level?: LevelData): void {
     // Online games carry their lobby code into the HUD, and mark which player
     // is the one at this keyboard; local ones show neither.
     const hosting = netHost !== null && hostPhase !== 'lobby';
-    gameState.onlineCode = hosting ? netHost?.code ?? null : null;
     gameState.onlinePlayerId = hosting ? 1 : null;
 
     gameStarted = true;
@@ -1246,6 +1251,10 @@ let menuIndex = 0;
 // lobby is up, and stays set through the game that lobby starts.
 let netHost: NetHost | null = null;
 let netClient: NetClient | null = null;
+/** The host's QR-code connections, one per joiner. Set while hosting. */
+let hostPairing: HostPairing | null = null;
+/** A joiner's QR-code connection, while joining or joined through one. */
+let clientPairing: ClientPairing | null = null;
 let lobbyView: LobbyView | null = null;
 let lobbyRunning = false;
 let returningToLobby = false;
@@ -1425,13 +1434,19 @@ function lobbyStatusFor(playerCount: number): string {
 function startHosting(): void {
     gameStarted = true; // keeps startScreenLoop and the menu handlers out of the way
     hostLevel = Levels.level1Data;
+    // Joiners connect by scanning this device's QR code and it scanning theirs.
+    const pairing = new HostPairing();
+    hostPairing = pairing;
+    pairing.onOfferChange = () => hostQr?.setLink(hostJoinLink());
     netHost = new NetHost({
+        transport: pairing,
         level: hostLevel,
         name: localPlayerName(),
         onRosterChange: (roster) => {
             if (lobbyView === null) return;
             lobbyView.roster = roster;
             lobbyView.status = lobbyStatusFor(roster.length);
+            hostQr?.setStatus(`${roster.length} OF ${MAX_PLAYERS} PLAYERS IN`);
         },
         onSeatConnectionChange: (playerId, connected) => {
             if (connected) {
@@ -1448,7 +1463,6 @@ function startHosting(): void {
     });
     lobbyView = {
         role: 'host',
-        code: netHost.code,
         roster: netHost.roster(),
         selfPlayerId: 1,
         mapName: hostLevel.name,
@@ -1456,73 +1470,284 @@ function startHosting(): void {
         error: null,
     };
     enterLobby();
+    // Nobody can join until they have seen the code, so start with it up.
+    openHostQr();
 }
 
+/**
+ * JOIN: straight to the camera. The host's screen shows the code; there is
+ * nothing to type and no other way in.
+ */
 function startJoining(): void {
     gameStarted = true;
-    let entry: CodeEntry | null = null;
-
-    entry = showCodeEntry({
-        onSubmit: (code) => {
-            entry?.setBusy('CONNECTING...');
-            netClient = new NetClient({
-                code,
-                name: localPlayerName(),
-                onStart: (level) => { startClientGame(level); },
-                onSnapshot: (snapshot) => { applyClientSnapshot(snapshot); },
-                onConnectionState: (state) => {
-                    clientConnection = state;
-                    if (lobbyView === null) return;
-                    lobbyView.status = state === 'reconnecting'
-                        ? 'RECONNECTING...'
-                        : 'WAITING FOR THE HOST TO START A NEW GAME';
-                },
-                onWelcome: (playerId, level, state) => {
-                    entry?.close();
-                    if (state !== null) {
-                        // A game is already running, so this is a player coming
-                        // back to a seat that was held for them. Straight into
-                        // the maze, no lobby in between.
-                        startClientGame(level, state);
-                        applyClientSnapshot(state);
-                        return;
-                    }
-                    lobbyView = {
-                        role: 'client',
-                        code,
-                        roster: netClient?.roster ?? [],
-                        selfPlayerId: playerId,
-                        mapName: level.name,
-                        status: 'WAITING FOR THE HOST...',
-                        error: null,
-                    };
-                    enterLobby();
-                },
-                onRosterChange: (roster, mapName) => {
-                    if (lobbyView === null) return;
-                    lobbyView.roster = roster;
-                    if (mapName !== null) lobbyView.mapName = mapName;
-                },
-                onFailure: (failure) => {
-                    netClient = null;
-                    // Mid-game there is nothing left to watch, so the host
-                    // leaving returns everyone to the menu. Once seated in a
-                    // lobby the screen owns the message and its LEAVE button;
-                    // before that, the code entry is still up and the player
-                    // can simply retype.
-                    if (clientRunning) leaveOnlineGame();
-                    else if (lobbyView !== null) lobbyView.error = joinFailureText(failure);
-                    else entry?.setError(joinFailureText(failure));
-                },
-            });
+    const scanner = showQrScanner({
+        title: 'SCAN THE HOST\'S QR',
+        hint: 'ON THE HOST\'S SCREEN: SHOW JOIN QR',
+        onResult: (text) => {
+            const offer = parseJoinLink(text);
+            if (offer === null) {
+                scanner.setMessage('THAT IS NOT A DOT MAZE JOIN CODE', true);
+                return false;
+            }
+            scanner.close();
+            joinFromLink(offer);
+            return true;
         },
         onCancel: () => {
-            entry?.close();
-            netClient?.leave();
-            netClient = null;
+            scanner.close();
             showStartScreen();
         },
     });
+}
+
+/**
+ * Join from the host's QR code: scanned in the game, or opened by a phone's
+ * camera, which lands here with the link in the page's own address.
+ *
+ * The joiner answers the host's offer and shows the answer as a reply code;
+ * the host scans it, and the two connect directly over the local network.
+ */
+function joinFromLink(offer: SignalBlob): void {
+    gameStarted = true;
+    unlockAudioOnFirstTouch();
+    const screen = showJoiningScreen(() => {
+        screen.close();
+        cancelJoin();
+    });
+    const pairing = new ClientPairing(offer);
+    clientPairing = pairing;
+    void pairing.answer.then((answer) => {
+        if (clientPairing !== pairing) return;
+        if (answer === null) {
+            screen.setError('COULD NOT READ THAT CODE - SCAN IT AGAIN');
+            return;
+        }
+        screen.showReply(answerLinkUrl(answer));
+        screen.setBusy('WAITING FOR THE HOST TO SCAN...');
+    });
+    beginJoin(screen, pairing);
+}
+
+function cancelJoin(): void {
+    netClient?.leave();
+    netClient = null;
+    clientPairing?.close();
+    clientPairing = null;
+    showStartScreen();
+}
+
+/** Join the host's room and follow it into the lobby or a running game. */
+function beginJoin(screen: JoiningScreen, pairing: ClientPairing): void {
+    netClient = new NetClient({
+        name: localPlayerName(),
+        pairing,
+        onStart: (level) => { startClientGame(level); },
+        onSnapshot: (snapshot) => { applyClientSnapshot(snapshot); },
+        onConnectionState: (state) => {
+            clientConnection = state;
+            if (lobbyView === null) return;
+            lobbyView.status = state === 'reconnecting'
+                ? 'THE HOST WENT QUIET...'
+                : 'WAITING FOR THE HOST TO START A NEW GAME';
+        },
+        onWelcome: (playerId, level, state) => {
+            screen.close();
+            if (state !== null) {
+                // A game is already running, so this is a player coming
+                // back to a seat that was held for them. Straight into
+                // the maze, no lobby in between.
+                startClientGame(level, state);
+                applyClientSnapshot(state);
+                return;
+            }
+            lobbyView = {
+                role: 'client',
+                roster: netClient?.roster ?? [],
+                selfPlayerId: playerId,
+                mapName: level.name,
+                status: 'WAITING FOR THE HOST...',
+                error: null,
+            };
+            enterLobby();
+        },
+        onRosterChange: (roster, mapName) => {
+            if (lobbyView === null) return;
+            lobbyView.roster = roster;
+            if (mapName !== null) lobbyView.mapName = mapName;
+        },
+        onFailure: (failure) => {
+            netClient = null;
+            clientPairing?.close();
+            clientPairing = null;
+            // Mid-game there is nothing left to watch, so the host
+            // leaving returns everyone to the menu. Once seated in a
+            // lobby the screen owns the message and its LEAVE button;
+            // before that, the joining screen says what happened.
+            if (clientRunning) leaveOnlineGame();
+            else if (lobbyView !== null) lobbyView.error = joinFailureText(failure);
+            else screen.setError(joinFailureText(failure));
+        },
+    });
+}
+
+// ── Host QR ───────────────────────────────────────────────────────────────────
+
+let hostQr: HostQrScreen | null = null;
+
+/** The link in the host's QR code, or null while the next offer is prepared. */
+function hostJoinLink(): string | null {
+    const offer = hostPairing?.currentOffer() ?? null;
+    return offer === null ? null : joinLinkUrl(offer);
+}
+
+function openHostQr(): void {
+    if (netHost === null || hostQr !== null) return;
+    const players = (): string => `${netHost?.roster().length ?? 1} OF ${MAX_PLAYERS} PLAYERS IN`;
+    hostQr = showHostQr({
+        link: hostJoinLink(),
+        status: players(),
+        onScanReply: () => {
+            const scanner = showQrScanner({
+                title: 'SCAN THE REPLY',
+                hint: 'THE CODE ON THE JOINER\'S SCREEN',
+                onResult: (text) => {
+                    const answer = parseAnswerLink(text);
+                    if (answer === null) {
+                        scanner.setMessage('THAT IS NOT A REPLY CODE', true);
+                        return false;
+                    }
+                    scanner.close();
+                    acceptReply(answer);
+                    return true;
+                },
+                onCancel: () => scanner.close(),
+            });
+        },
+        onClose: closeHostQr,
+    });
+}
+
+function closeHostQr(): void {
+    hostQr?.close();
+    hostQr = null;
+}
+
+/** A joiner's reply reached the host, by the in-game scanner or a camera-app tab. */
+async function acceptReply(answer: SignalBlob): Promise<AnswerResult | 'no-host'> {
+    if (hostPairing === null) return 'no-host';
+    const result = await hostPairing.acceptAnswer(answer);
+    hostQr?.setStatus(
+        result === 'connecting' ? 'CONNECTING...'
+            : result === 'stale' ? 'THAT REPLY IS FOR AN OLD CODE - HAVE THEM SCAN AGAIN'
+                : 'COULD NOT USE THAT REPLY - HAVE THEM SCAN AGAIN',
+        result !== 'connecting',
+    );
+    return result;
+}
+
+// A reply opened by the host device's own camera app lands in a new tab. It
+// hands the reply to the game tab over this channel and says whether it took.
+const PAIRING_CHANNEL = 'dot-maze-pairing';
+
+function listenForReplyTabs(): void {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel(PAIRING_CHANNEL);
+    channel.onmessage = (e: MessageEvent) => {
+        const data = e.data as { type?: string; text?: string; id?: string };
+        if (data.type !== 'reply' || typeof data.text !== 'string' || hostPairing === null) return;
+        const answer = parseAnswerLink(data.text);
+        if (answer === null) return;
+        void acceptReply(answer).then(result => channel.postMessage({ type: 'ack', id: data.id, result }));
+    };
+}
+
+/**
+ * This tab was opened on a reply link: pass it to the game tab and say what
+ * happened. It never becomes a game itself — it exists for a moment, between
+ * the camera app and the player switching back.
+ */
+function forwardReplyTab(url: string): void {
+    const ctx = gameState.ctx;
+    const say = (lines: string[], color = 'white'): void => {
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, gameState.canvas.width, gameState.canvas.height);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        lines.forEach((line, i) => {
+            ctx.fillStyle = i === 0 ? color : '#aaa';
+            ctx.font = `${i === 0 ? 'bold ' : ''}${Math.round(unit * (i === 0 ? 0.9 : 0.6))}px monospace`;
+            ctx.fillText(line, gameState.canvas.width / 2, unit * (15 + i * 1.6));
+        });
+    };
+    gameStarted = true;
+    if (typeof BroadcastChannel === 'undefined') {
+        say(['CANNOT PASS THIS ON', 'USE SCAN REPLY IN THE HOST\'S GAME'], '#ff5555');
+        return;
+    }
+    const channel = new BroadcastChannel(PAIRING_CHANNEL);
+    const id = Math.random().toString(36).slice(2);
+    let answered = false;
+    channel.onmessage = (e: MessageEvent) => {
+        const data = e.data as { type?: string; id?: string; result?: string };
+        if (data.type !== 'ack' || data.id !== id) return;
+        answered = true;
+        if (data.result === 'connecting') say(['REPLY SENT', 'SWITCH BACK TO YOUR GAME'], 'yellow');
+        else say(['THAT REPLY IS OUT OF DATE', 'HAVE THEM SCAN YOUR QR AGAIN'], '#ff5555');
+    };
+    say(['SENDING THE REPLY...']);
+    channel.postMessage({ type: 'reply', text: url, id });
+    setTimeout(() => {
+        if (!answered) say(['NO HOSTED GAME FOUND IN THIS BROWSER', 'OPEN SCAN REPLY IN THE HOST\'S GAME INSTEAD'], '#ff5555');
+    }, 2000);
+}
+
+// ── Offline copy ──────────────────────────────────────────────────────────────
+
+/** Shared with sw.js, which answers from this cache when the network is gone. */
+const OFFLINE_CACHE = 'dot-maze-offline-v1';
+
+/**
+ * Keep a copy of this build so the game opens with no internet — which is when
+ * QR pairing matters most. The service worker only serves the copy when the
+ * network fails; online, everything loads as it always has.
+ *
+ * The page names its own files rather than the worker guessing them: the
+ * bundle's name changes with every build, and only the page knows it. Older
+ * bundles are dropped so the copy does not grow build after build.
+ */
+async function cacheForOffline(): Promise<void> {
+    if (!('serviceWorker' in navigator) || !window.isSecureContext || typeof caches === 'undefined') return;
+    try {
+        await navigator.serviceWorker.register('sw.js');
+        const script = document.querySelector<HTMLScriptElement>('script[src*="dist/"]');
+        const files = [
+            new URL('index.html', window.location.href).href,
+            new URL('assets/audio/menu-music.mp3', window.location.href).href,
+            ...(script !== null ? [script.src] : []),
+        ];
+        const cache = await caches.open(OFFLINE_CACHE);
+        await cache.addAll(files);
+        for (const request of await cache.keys()) {
+            if (request.url.includes('/dist/') && request.url !== script?.src) await cache.delete(request);
+        }
+    } catch {
+        // Offline already, or storage refused: the game still works online.
+    }
+}
+
+/**
+ * Opening the game from a link happens without a tap, and browsers keep sound
+ * off until there has been one. Take the first.
+ */
+function unlockAudioOnFirstTouch(): void {
+    if (audioUnlocked) return;
+    const unlock = (): void => {
+        document.removeEventListener('pointerdown', unlock, true);
+        if (audioUnlocked) return;
+        Sound.init();
+        audioUnlocked = true;
+    };
+    document.addEventListener('pointerdown', unlock, true);
 }
 
 function joinFailureText(failure: JoinFailure): string {
@@ -1530,9 +1755,7 @@ function joinFailureText(failure: JoinFailure): string {
         case 'protocol':    return 'DIFFERENT GAME VERSION - RELOAD THE PAGE';
         case 'full':        return 'THAT GAME IS FULL';
         case 'in-progress': return 'THAT GAME HAS ALREADY STARTED';
-        case 'timeout':     return 'NO GAME FOUND WITH THAT CODE';
-        case 'bad-code':    return 'CODES ARE SIX DIGITS';
-        case 'host-left':   return 'THE HOST LEFT';
+        case 'host-left':   return 'LOST THE HOST - SCAN ITS CODE AGAIN';
     }
 }
 
@@ -1545,9 +1768,11 @@ function enterLobby(): void {
         menuMusicPlaying = true;
     }
     document.onkeydown = (e: KeyboardEvent) => {
+        if (hostQr !== null) return; // the QR screen has the keyboard
         if (e.key === 'Escape') leaveLobby();
         else if (e.key === 'Enter' || e.key === ' ') hostStartGame();
         else if (e.key === 'm' || e.key === 'M') openMapPicker();
+        else if (e.key === 'q' || e.key === 'Q') openHostQr();
     };
     gameState.canvas.addEventListener('click', onLobbyTap);
     gameState.canvas.addEventListener('touchend', onLobbyTouch, { passive: false } as EventListenerOptions);
@@ -1573,6 +1798,7 @@ function handleLobbyPoint(x: number, y: number): void {
     if (hitsLeaveButton(x, y)) leaveLobby();
     else if (hitsStartButton(x, y)) hostStartGame();
     else if (hitsMapButton(x, y)) openMapPicker();
+    else if (lobbyView?.role === 'host' && hitsQrButton(x, y)) openHostQr();
 }
 
 /**
@@ -1628,7 +1854,7 @@ function canvasPoint(clientX: number, clientY: number): [number, number] {
 }
 
 // Standard gamepad face and d-pad indices, for the lobby's three controls.
-const PAD_A = 0, PAD_B = 1, PAD_Y = 3, PAD_UP = 12, PAD_DOWN = 13;
+const PAD_A = 0, PAD_B = 1, PAD_X = 2, PAD_Y = 3, PAD_UP = 12, PAD_DOWN = 13;
 let lobbyPrevPad: boolean[] = [];
 let clientPrevB = false;
 
@@ -1642,8 +1868,12 @@ function lobbyFrame(): void {
     // While the map picker is up it owns the pad, or A would start the game
     // behind it.
     const picker = document.getElementById('ed-library-modal');
-    if (picker !== null) {
+    if (hostQr !== null) {
+        // The QR screen and its scanner read the pad themselves.
+    } else if (picker !== null) {
         drivePickerWithPad(picker, rising);
+    } else if (rising(PAD_X) && lobbyView.role === 'host') {
+        openHostQr();
     } else if (rising(PAD_B)) {
         lobbyPrevPad = pressed;
         leaveLobby();
@@ -1697,6 +1927,7 @@ function hostStartGame(): void {
         ...netHost.seatList().map(seat => ({ id: seat.playerId, input: seat.input as PlayerInput })),
     ];
 
+    closeHostQr();
     exitLobbyScreen();
     NetEvents.setRecording(true);
     snapshotTick = 0;
@@ -1721,10 +1952,13 @@ function leaveLobby(): void {
 }
 
 function closeOnlineSession(): void {
-    gameState.onlineCode = null;
     gameState.onlinePlayerId = null;
-    netHost?.close();
+    closeHostQr();
+    netHost?.close(); // leaves the host's pairing with it
     netHost = null;
+    hostPairing = null;
+    clientPairing?.close();
+    clientPairing = null;
     netClient?.leave();
     netClient = null;
     lobbyView = null;
@@ -1737,9 +1971,9 @@ function closeOnlineSession(): void {
 const INPUT_HEARTBEAT_FRAMES = 6;
 
 /**
- * How long a client watches a silent host before treating the connection as
- * lost and rebuilding it. Long enough to ride out a lag spike or a quick tab
- * switch, short enough to leave most of the host's 30 s seat-hold to work with.
+ * How long a client watches a silent host before saying it has gone quiet and
+ * starting the countdown to giving up. Long enough to ride out a lag spike or
+ * a quick tab switch without alarming anyone.
  */
 const RECONNECT_AFTER_SILENCE_MS = 6000;
 
@@ -1760,7 +1994,6 @@ function startClientGame(level: LevelData, state: Snapshot | null = null): void 
     clientInput = new InputSampler(new CompositePlayerInput(localInputList()) as PlayerInput);
 
     clientGame = new ClientGame(level, netClient.playerId, state?.level ?? 1);
-    gameState.onlineCode = netClient.code;
     gameState.onlinePlayerId = netClient.playerId;
     clientPhase = 'playing';
     clientConnection = 'connected';
@@ -1800,7 +2033,7 @@ function clientFrame(): void {
         if (clientConnection === 'reconnecting') {
             Sound.stopSiren();
             const left = netClient?.reconnectSecondsLeft() ?? 0;
-            drawWaitingBanner('RECONNECTING...', `GIVING UP IN ${left}s - ESC OR B TO LEAVE`);
+            drawWaitingBanner('THE HOST WENT QUIET', `GIVING UP IN ${left}s - ESC OR B TO LEAVE`);
         } else if (clientGame.isStarved()) {
             Sound.stopSiren();
             drawWaitingBanner('WAITING FOR THE HOST...');
@@ -1855,7 +2088,6 @@ function onClientTouch(e: TouchEvent): void {
 /** Tear down the client's world, leaving the room connection alone. */
 function stopClientGame(): void {
     clientRunning = false;
-    gameState.onlineCode = null;
     gameState.onlinePlayerId = null;
     clientPhase = 'lobby';
     clientInput?.destroy();
@@ -1873,7 +2105,6 @@ function returnClientToLobby(): void {
     if (netClient === null) { showStartScreen(); return; }
     lobbyView = {
         role: 'client',
-        code: netClient.code,
         roster: netClient.roster,
         selfPlayerId: netClient.playerId,
         mapName: netClient.level?.name ?? '',
@@ -2015,8 +2246,8 @@ function playerSelectLoop(): void {
 
 const MENU_LABELS: Record<MenuItem, string> = {
     play: 'START GAME',
-    host: 'HOST ONLINE',
-    join: 'JOIN ONLINE',
+    host: 'HOST LAN GAME',
+    join: 'JOIN LAN GAME',
 };
 
 function drawStartMenu(ctx: CanvasRenderingContext2D, w: number): void {
@@ -2415,6 +2646,20 @@ window.onload = function () {
         if (audioUnlocked && Math.abs(dy) > 40) moveMenu(dy > 0 ? 1 : -1);
         else handleMenuInteraction();
     }, { passive: false } as EventListenerOptions);
+
+    listenForReplyTabs();
+    void cacheForOffline();
+
+    // Opened from a QR code by a phone's camera: the link says what to do.
+    const hash = window.location.hash;
+    if (hash.length > 1) {
+        // Once is enough — a reload should not rejoin or resend.
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+        const reply = parseAnswerLink(hash);
+        if (reply !== null) { forwardReplyTab(hash); return; }
+        const link = parseJoinLink(hash);
+        if (link !== null) { joinFromLink(link); return; }
+    }
 
     startScreenLoop();
 };

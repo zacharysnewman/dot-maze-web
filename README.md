@@ -6,7 +6,8 @@ A web-based dot-maze game written in TypeScript. The maze, characters, and all v
 
 - **1–4 player co-op** — shared life pool, simultaneous play, players sit out on death and revive on level clear
 - Keyboard, touch/swipe, and gamepad input — P1 accepts all three simultaneously
-- **Online co-op** behind `?multiplayer` — see `MULTIPLAYER.md`
+- **LAN co-op** behind `?multiplayer` — players on the same Wi-Fi join by scanning QR codes; no internet or server needed; see `MULTIPLAYER.md`
+- Works offline once it has been opened (service worker)
 - All graphics procedurally drawn on canvas (no image assets)
 - Web Audio API sound effects
 
@@ -31,7 +32,7 @@ npm run build     # type-check + production bundle
 ```
 
 Open `index.html` in a browser after building. Append `?dev=true` to enable the
-debug panel, and `?multiplayer` to show the online host/join entries on the
+debug panel, and `?multiplayer` to show the LAN host/join entries on the
 start menu.
 
 ## Project Structure
@@ -51,4 +52,4 @@ MAP-EDITOR.md        # planned level editor spec
 ## Documentation
 
 - `MAP-EDITOR.md` — level editor implementation plan
-- `MULTIPLAYER.md` — online co-op implementation plan
+- `MULTIPLAYER.md` — LAN co-op design and implementation notes
